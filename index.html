@@ -70,16 +70,16 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 .modal-box .close-btn{display:block;margin:14px auto 0;padding:7px 22px;border:1px solid #ddd;border-radius:20px;background:transparent;cursor:pointer;font-size:.68rem;color:#777;letter-spacing:.05em;transition:background .15s}
 .modal-box .close-btn:hover{background:#f5f5f5}
 
-/* Grid */
-#grid-modal .modal-box{max-width:420px;padding:20px 16px;max-height:85vh}
-.grid-container{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:10px 0;max-height:60vh;overflow-y:auto;padding:4px}
-.grid-item{aspect-ratio:1;border-radius:50%;cursor:pointer;position:relative;overflow:hidden;border:2px solid transparent;transition:border-color .2s,transform .15s}
+/* Grid — wider modal, bigger items with good spacing */
+#grid-modal .modal-box{max-width:520px;width:92%;padding:20px 16px;max-height:85vh}
+.grid-container{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin:10px 0;max-height:62vh;overflow-y:auto;padding:8px 4px}
+.grid-item{aspect-ratio:1;border-radius:50%;cursor:pointer;position:relative;overflow:visible;border:2px solid transparent;transition:border-color .2s,transform .15s}
 .grid-item:hover{transform:scale(1.06)}
 .grid-item:active{transform:scale(.95)}
 .grid-item.used{border-color:rgba(80,140,255,.5)}
 .grid-item.disabled{opacity:.35;pointer-events:none}
 .grid-item img{width:100%;height:100%;border-radius:50%;object-fit:cover}
-.grid-item-label{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:.38rem;color:#fff;background:rgba(0,0,0,.45);padding:2px 1px;line-height:1.2;letter-spacing:.02em}
+.grid-item-label{position:absolute;bottom:-14px;left:50%;transform:translateX(-50%);text-align:center;font-size:.38rem;color:#666;padding:1px 3px;line-height:1.2;letter-spacing:.02em;white-space:nowrap}
 
 /* Share */
 #share-modal .mix-info{font-size:.7rem;background:#f8f8f5;border-radius:8px;padding:12px;margin:10px 0;color:#555;line-height:1.6;white-space:pre-wrap}
@@ -174,6 +174,11 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 <script>
 'use strict';
 
+/* ======== REGISTER SERVICE WORKER FOR CACHING ======== */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(e => console.log('SW registration failed:', e));
+}
+
 /* ======== CONSTANTS ======== */
 const TOTAL = 157;          // files 0..156
 const MAX   = 4;            // max simultaneous sounds
@@ -182,6 +187,11 @@ const ENTRY_DUR = 600;      // ms for entry animation
 const EAR = 'EAR/';
 const EYE = 'EYE/';
 const BG_R = 245, BG_G = 245, BG_B = 240; // background colour for trail fade
+
+/* ======== GRAVITY CONSTANTS ======== */
+const GRAVITY_G = 4500;       // gravitational constant
+const GRAVITY_MIN_DIST = 60;  // minimum distance clamp
+const GRAVITY_DAMPING = 0.97; // damping factor per frame
 
 /* Build shuffled index arrays for random pairing */
 function shuffle(arr) {
@@ -196,6 +206,17 @@ let earOrder = shuffle([...Array(TOTAL).keys()]);
 let eyeOrder = shuffle([...Array(TOTAL).keys()]);
 let spawnIdx = 0;
 
+/* ======== WEB AUDIO CONTEXT FOR ANALYSER ======== */
+let audioCtx = null;
+
+function getAudioCtx() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+  return audioCtx;
+}
+
 /* ======== STATE ======== */
 let started = false;
 let frozen = false;
@@ -205,8 +226,8 @@ let uid_ = 0;
 let dragTgt = null, dOX = 0, dOY = 0, dHist = [];
 const activeEars = new Set();
 let lastT = 0;
-let detailTarget = null;    // circle currently shown in detail view
-let clickStart = null;      // {x, y, t} for click vs drag detection
+let detailTarget = null;
+let clickStart = null;
 let exporting = false;
 
 /* ======== TRAIL CANVAS ======== */
@@ -223,14 +244,31 @@ function resizeTrail() {
   trailCtx.setTransform(trailDpr, 0, 0, trailDpr, 0, 0);
 }
 
-/* ======== AUDIO ======== */
+/* ======== AUDIO (with Web Audio API analyser) ======== */
 function createAudioEl(earIdx) {
   const a = new Audio();
   a.src = EAR + earIdx + '.wav';
   a.loop = true;
   a.volume = 0;
   a.preload = 'auto';
+  a.crossOrigin = 'anonymous';
   return a;
+}
+
+function createAnalyser(audioEl) {
+  try {
+    const ctx = getAudioCtx();
+    const source = ctx.createMediaElementSource(audioEl);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    analyser.smoothingTimeConstant = 0.85;
+    source.connect(analyser);
+    analyser.connect(ctx.destination);
+    return analyser;
+  } catch(e) {
+    console.warn('Could not create analyser:', e);
+    return null;
+  }
 }
 
 /* ======== HELPERS ======== */
@@ -296,11 +334,11 @@ async function spawn(earIdxOverride, eyeIdxOverride) {
   const app = document.getElementById('app');
   const W = app.clientWidth, H = app.clientHeight;
 
-  // Orbit parameters — speed reduced to 0.75x
+  // Orbit parameters — base speed reduced (gravity further slows)
   const orbitR = getOrbitR();
   const angle = Math.random() * Math.PI * 2;
   const dir = Math.random() < 0.5 ? 1 : -1;
-  const angSpeed = dir * (0.35 + Math.random() * 0.4) * 0.75;
+  const angSpeed = dir * (0.25 + Math.random() * 0.3) * 0.6;
 
   const cx = W / 2, cy = H / 2;
   const initX = cx + orbitR * Math.cos(angle);
@@ -347,6 +385,10 @@ async function spawn(earIdxOverride, eyeIdxOverride) {
     return;
   }
 
+  // Create Web Audio analyser for vibration
+  const analyser = createAnalyser(audioEl);
+  const analyserData = analyser ? new Uint8Array(analyser.frequencyBinCount) : null;
+
   const obj = {
     el, audioEl, earIdx, eyeIdx,
     born: Date.now(), bsz, uid,
@@ -354,19 +396,122 @@ async function spawn(earIdxOverride, eyeIdxOverride) {
     angle, orbitR, angSpeed,
     phase: 'orbit',           // orbit | drift | dragging | thrown
     driftVx: 0, driftVy: 0,
-    throwVx: 0, throwVy: 0
+    throwVx: 0, throwVy: 0,
+    // Audio analyser for vibration
+    analyser, analyserData,
+    vibeAmount: 0  // current vibration amplitude 0-1
   };
   active.set(uid, obj);
   updCount();
 }
 
+/* ======== AUDIO-REACTIVE BREATHING PULSE ======== */
+function updateVibration(s) {
+  if (!s.analyser || !s.analyserData) { s.vibeAmount = 0; return; }
+  try {
+    s.analyser.getByteFrequencyData(s.analyserData);
+    // Weight low-mid frequencies more heavily (bass/beat)
+    const data = s.analyserData;
+    const len = data.length;
+    let sum = 0, weight = 0;
+    for (let i = 0; i < len; i++) {
+      // Bass bins (0-len/4) get 3x weight, mids get 1.5x, highs get 0.5x
+      const w = i < len / 4 ? 3.0 : i < len / 2 ? 1.5 : 0.5;
+      sum += data[i] * w;
+      weight += 255 * w;
+    }
+    const raw = sum / weight; // 0-1 normalized, bass-weighted
+    // Smooth with lerp toward target (slow attack, medium release)
+    const target = raw;
+    if (target > s.vibeAmount) {
+      s.vibeAmount += (target - s.vibeAmount) * 0.18; // attack
+    } else {
+      s.vibeAmount += (target - s.vibeAmount) * 0.08; // release (slower)
+    }
+  } catch(e) {
+    s.vibeAmount = 0;
+  }
+}
+
+/* ======== GRAVITATIONAL ATTRACTION ======== */
+function applyGravity(dt) {
+  const arr = [...active.values()];
+  const n = arr.length;
+  if (n < 2) return;
+
+  for (let i = 0; i < n; i++) {
+    arr[i]._gax = 0;
+    arr[i]._gay = 0;
+  }
+
+  // Compute pairwise gravitational forces
+  for (let i = 0; i < n; i++) {
+    const a = arr[i];
+    if (a.phase === 'dragging') continue;
+    const ax = a.x + a.bsz / 2;
+    const ay = a.y + a.bsz / 2;
+
+    for (let j = i + 1; j < n; j++) {
+      const b = arr[j];
+      if (b.phase === 'dragging') continue;
+      const bx = b.x + b.bsz / 2;
+      const by = b.y + b.bsz / 2;
+
+      let dx = bx - ax;
+      let dy = by - ay;
+      let dist = Math.hypot(dx, dy);
+      if (dist < GRAVITY_MIN_DIST) dist = GRAVITY_MIN_DIST;
+
+      const force = GRAVITY_G / (dist * dist);
+      const fx = force * (dx / dist);
+      const fy = force * (dy / dist);
+
+      a._gax += fx;
+      a._gay += fy;
+      b._gax -= fx;
+      b._gay -= fy;
+    }
+  }
+
+  // Apply gravitational effects
+  const appEl = document.getElementById('app');
+  const cx = appEl.clientWidth / 2;
+  const cy = appEl.clientHeight / 2;
+
+  for (let i = 0; i < n; i++) {
+    const s = arr[i];
+    if (s.phase === 'orbit') {
+      const sx = s.x + s.bsz / 2;
+      const sy = s.y + s.bsz / 2;
+      const toCenter_dx = cx - sx;
+      const toCenter_dy = cy - sy;
+      const rDist = Math.hypot(toCenter_dx, toCenter_dy) || 1;
+      const radialDir_x = toCenter_dx / rDist;
+      const radialDir_y = toCenter_dy / rDist;
+
+      const radialForce = s._gax * radialDir_x + s._gay * radialDir_y;
+      const tangForce = s._gax * (-radialDir_y) + s._gay * radialDir_x;
+
+      s.orbitR = Math.max(25, s.orbitR - radialForce * dt * 0.5);
+      s.angSpeed += tangForce * dt * 0.0003;
+      s.angSpeed *= Math.pow(GRAVITY_DAMPING, dt);
+      const maxAng = 0.35;
+      if (Math.abs(s.angSpeed) > maxAng) s.angSpeed = maxAng * Math.sign(s.angSpeed);
+    } else if (s.phase === 'thrown') {
+      s.throwVx += s._gax * dt;
+      s.throwVy += s._gay * dt;
+    } else if (s.phase === 'drift') {
+      s.driftVx += s._gax * dt;
+      s.driftVy += s._gay * dt;
+    }
+  }
+}
+
 /* ======== TRAIL DRAWING ======== */
 function drawTrailFrame(W, H) {
-  // Fade previous content toward background colour
   trailCtx.fillStyle = `rgba(${BG_R},${BG_G},${BG_B},0.1)`;
   trailCtx.fillRect(0, 0, W, H);
 
-  // Draw each active circle as a faded afterimage
   active.forEach(s => {
     if (s.phase === 'dragging') return;
     const age = Date.now() - s.born;
@@ -374,16 +519,17 @@ function drawTrailFrame(W, H) {
     const img = s.el.querySelector('img');
     if (!img || !img.complete || !img.naturalWidth) return;
 
-    // Get current rotation from CSS animation
     let rot = 0;
     try {
       const m = new DOMMatrix(getComputedStyle(img).transform);
       rot = Math.atan2(m.b, m.a);
     } catch(e) {}
 
+    // Apply same breathing scale as the actual circle
+    const breath = 0.65 + s.vibeAmount * 0.85;
+    const r = (s.bsz / 2) * breath;
     const cx = s.x + s.bsz / 2;
     const cy = s.y + s.bsz / 2;
-    const r = s.bsz / 2;
 
     trailCtx.save();
     trailCtx.globalAlpha = 0.16;
@@ -392,7 +538,7 @@ function drawTrailFrame(W, H) {
     trailCtx.beginPath();
     trailCtx.arc(0, 0, r, 0, Math.PI * 2);
     trailCtx.clip();
-    trailCtx.drawImage(img, -r, -r, s.bsz, s.bsz);
+    trailCtx.drawImage(img, -r, -r, r * 2, r * 2);
     trailCtx.restore();
   });
 }
@@ -401,7 +547,6 @@ function drawTrailFrame(W, H) {
 function animate(time) {
   requestAnimationFrame(animate);
   if (!started) return;
-  // Pause all movement while detail view is open (audio & self-spin continue)
   if (detailTarget) return;
   if (!lastT) lastT = time;
   const dt = Math.min((time - lastT) / 1000, 0.1);
@@ -414,10 +559,19 @@ function animate(time) {
   const now = Date.now();
   const toRemove = [];
 
+  // Apply gravitational attraction between all circles
+  applyGravity(dt);
+
   active.forEach((s, uid) => {
     const age = now - s.born;
     const entryT = Math.min(1, age / ENTRY_DUR);
     const entryE = easeOut3(entryT);
+
+    // Update audio-reactive breathing pulse
+    updateVibration(s);
+    const vibe = s.vibeAmount;
+    // Smooth breathing scale: range from 0.70 (quiet) to 1.35 (loud beat)
+    const breathScale = 0.65 + vibe * 0.85;
 
     /* ---- DRAGGING ---- */
     if (s.phase === 'dragging') {
@@ -425,7 +579,7 @@ function animate(time) {
       const vol = Math.max(0, 1 - dist / maxD);
       try { s.audioEl.volume = vol * vol * 0.25; } catch(e) {}
       s.el.style.opacity = (0.35 + vol * 0.65).toFixed(2);
-      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${(0.82 + vol * 0.18).toFixed(3)})`;
+      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${((0.82 + vol * 0.18) * breathScale).toFixed(3)})`;
       return;
     }
 
@@ -441,7 +595,7 @@ function animate(time) {
       const vol = Math.max(0, 1 - dist / maxD);
       try { s.audioEl.volume = vol * vol * 0.25; } catch(e) {}
       s.el.style.opacity = (0.35 + vol * 0.65).toFixed(2);
-      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${(0.82 + vol * 0.18).toFixed(3)})`;
+      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${((0.82 + vol * 0.18) * breathScale).toFixed(3)})`;
 
       if (Math.hypot(s.throwVx, s.throwVy) < 15) {
         const dx = s.x + s.bsz/2 - cx;
@@ -472,7 +626,7 @@ function animate(time) {
 
       const entryScale = 0.2 + 0.8 * entryE;
       s.el.style.opacity = ((0.35 + vol * 0.65) * entryE).toFixed(2);
-      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${((0.82 + vol * 0.18) * entryScale).toFixed(3)})`;
+      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${((0.82 + vol * 0.18) * entryScale * breathScale).toFixed(3)})`;
 
       if (!frozen && age > DRIFT_AT) {
         s.phase = 'drift';
@@ -498,7 +652,7 @@ function animate(time) {
       try { s.audioEl.volume = vol * vol * 0.25; } catch(e) {}
 
       s.el.style.opacity = (0.35 + vol * 0.65).toFixed(2);
-      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${(0.82 + vol * 0.18).toFixed(3)})`;
+      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${((0.82 + vol * 0.18) * breathScale).toFixed(3)})`;
 
       const scx = s.x + s.bsz/2, scy = s.y + s.bsz/2;
       if (scx < -s.bsz || scx > W + s.bsz || scy < -s.bsz || scy > H + s.bsz) {
@@ -509,8 +663,6 @@ function animate(time) {
   });
 
   toRemove.forEach(uid => rmSound(uid));
-
-  // Draw trail afterimages
   drawTrailFrame(W, H);
 }
 
@@ -583,7 +735,6 @@ function onUp() {
   const s = dragTgt;
   s.el.style.zIndex = '';
 
-  // Click detection (tap → open detail)
   if (clickStart) {
     const last = dHist.length > 0 ? dHist[dHist.length - 1] : clickStart;
     const dist = Math.hypot(last.x - clickStart.x, last.y - clickStart.y);
@@ -597,7 +748,6 @@ function onUp() {
   }
   clickStart = null;
 
-  // Throw detection
   if (dHist.length >= 2) {
     const last = dHist[dHist.length - 1], first = dHist[0];
     const dt = (last.t - first.t) / 1000;
@@ -614,7 +764,6 @@ function onUp() {
     }
   }
 
-  // No throw: resume orbit
   const app = document.getElementById('app');
   const cxS = app.clientWidth / 2, cyS = app.clientHeight / 2;
   const dx = s.x + s.bsz/2 - cxS;
@@ -653,7 +802,6 @@ function openDetail(s) {
   detailTarget = s;
   lastT = 0;
 
-  // Solo: mute all except selected
   active.forEach(o => {
     try {
       if (o.uid === s.uid) {
@@ -703,7 +851,7 @@ function closeDetail() {
 
 function encodeWav(left, right, sampleRate) {
   const numSamples = left.length;
-  const dataSize = numSamples * 2 * 2; // 2 channels, 16-bit
+  const dataSize = numSamples * 2 * 2;
   const buffer = new ArrayBuffer(44 + dataSize);
   const v = new DataView(buffer);
   function ws(off, str) { for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i)); }
@@ -766,7 +914,7 @@ async function exportMix() {
           src.buffer = buf;
           src.loop = true;
           const g = offCtx.createGain();
-          g.gain.value = vol * 4; // boost from max 0.25 to ~1.0
+          g.gain.value = vol * 4;
           src.connect(g);
           g.connect(offCtx.destination);
           src.start(0);
@@ -780,7 +928,6 @@ async function exportMix() {
     const L = rendered.getChannelData(0);
     const R = rendered.numberOfChannels > 1 ? rendered.getChannelData(1) : L;
 
-    // Normalize
     let peak = 0;
     for (let i = 0; i < L.length; i++) peak = Math.max(peak, Math.abs(L[i]), Math.abs(R[i]));
     if (peak > 0.001) {
@@ -809,6 +956,10 @@ function startApp() {
   spawn();
   schedNext();
 }
+
+// Click-to-start overlay
+document.getElementById('start-overlay').addEventListener('click', startApp);
+document.getElementById('start-overlay').addEventListener('touchend', e => { e.preventDefault(); startApp(); });
 
 /* ======== MODALS ======== */
 function openModal(id) { document.getElementById(id).classList.add('show'); }
@@ -855,9 +1006,6 @@ function updShare() {
 }
 
 /* ======== EVENTS ======== */
-document.getElementById('start-overlay').addEventListener('click', startApp);
-document.getElementById('start-overlay').addEventListener('touchend', e => { e.preventDefault(); startApp(); });
-
 const appEl = document.getElementById('app');
 appEl.addEventListener('mousedown', onDown);
 document.addEventListener('mousemove', onMove);
@@ -878,7 +1026,6 @@ document.getElementById('copy-btn').addEventListener('click', () => {
   }).catch(() => {});
 });
 
-// Detail modal: tap anywhere to close
 document.getElementById('detail-modal').addEventListener('click', () => {
   if (detailTarget) closeDetail();
 });
@@ -892,7 +1039,7 @@ document.getElementById('detail-modal').addEventListener('click', () => {
 window.addEventListener('resize', resizeTrail);
 document.addEventListener('contextmenu', e => e.preventDefault());
 
-// Start animation loop immediately (runs idle until startApp)
+// Start animation loop (app starts on overlay click)
 requestAnimationFrame(animate);
 </script>
 </body>
