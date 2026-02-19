@@ -1,0 +1,899 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#f5f5f0">
+<title>INTO INFINITY - AudioVisual Mixer</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;font-family:'Helvetica Neue',Arial,sans-serif;background:#f5f5f0}
+#app{width:100%;height:100%;position:relative;overflow:hidden;transition:filter .6s,background-color .6s}
+
+/* Frozen inversion */
+#app.frozen{filter:invert(1)}
+
+/* Trail canvas */
+#trail-canvas{position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:2}
+
+/* Background ring */
+#bg-ring{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(70vw,70vh);height:min(70vw,70vh);border-radius:50%;border:1px solid rgba(0,0,0,.04);pointer-events:none;z-index:1}
+
+/* Infinity logo center */
+#infinity-wrap{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;cursor:pointer;transition:filter .4s,transform .15s;padding:14px}
+#infinity-wrap:active{transform:translate(-50%,-50%) scale(.92)}
+#infinity-logo{width:min(22vw,22vh);height:auto;pointer-events:none;transition:filter .4s}
+#infinity-wrap.frozen{filter:drop-shadow(0 0 16px rgba(70,130,255,.5)) drop-shadow(0 0 36px rgba(70,130,255,.25))}
+#infinity-wrap.frozen #infinity-logo{filter:brightness(1.2) saturate(1.4)}
+
+/* Start overlay */
+#start-overlay{position:absolute;inset:0;background:rgba(245,245,240,.94);z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity .8s ease;cursor:pointer}
+#start-overlay.hidden{opacity:0;pointer-events:none}
+.start-logo{margin-bottom:20px;width:min(40vw,180px);height:auto}
+#start-overlay h1{font-size:1.5rem;font-weight:200;letter-spacing:.2em;color:#3a3832;margin-bottom:6px}
+#start-overlay .sub{font-size:.68rem;font-weight:300;letter-spacing:.1em;color:#aaa;margin-bottom:28px}
+#start-overlay .tap{font-size:.76rem;color:#999;letter-spacing:.06em;animation:pulse 2.5s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+
+/* Corner buttons */
+.corner-btn{position:absolute;z-index:20;width:32px;height:32px;border-radius:50%;border:1.2px solid rgba(0,0,0,.12);background:rgba(255,255,255,.55);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background .2s,border-color .2s,transform .15s;font-size:.65rem;color:#777}
+.corner-btn:hover{background:rgba(255,255,255,.85);border-color:rgba(0,0,0,.22)}
+.corner-btn:active{transform:scale(.9)}
+#btn-info{top:16px;left:16px;font-style:italic;font-weight:700;font-family:Georgia,'Times New Roman',serif;font-size:.72rem}
+#btn-grid{bottom:16px;left:16px}
+#btn-grid svg{width:14px;height:14px;opacity:.7}
+
+/* Export button (visible only when frozen) */
+.export-btn{position:absolute;bottom:20px;left:50%;transform:translateX(-50%);z-index:20;padding:10px 24px;border:1.5px solid rgba(0,0,0,.18);border-radius:24px;background:rgba(255,255,255,.7);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);cursor:pointer;font-size:.72rem;font-weight:400;letter-spacing:.08em;color:#444;transition:background .2s,opacity .3s;opacity:0;pointer-events:none;font-family:'Helvetica Neue',Arial,sans-serif}
+.export-btn.show{opacity:1;pointer-events:auto}
+.export-btn:hover{background:rgba(255,255,255,.92)}
+.export-btn:active{transform:translateX(-50%) scale(.95)}
+.export-btn.recording{border-color:rgba(220,60,60,.5);color:#c44;animation:rec-pulse 1s ease-in-out infinite}
+@keyframes rec-pulse{0%,100%{opacity:.7}50%{opacity:1}}
+
+/* Freeze label */
+#freeze-label{position:absolute;top:50%;left:50%;transform:translate(-50%,30px);z-index:11;font-size:.52rem;letter-spacing:.18em;color:rgba(70,130,255,.6);opacity:0;transition:opacity .4s;pointer-events:none;text-transform:uppercase;font-weight:500}
+#freeze-label.show{opacity:1}
+
+/* Sound count */
+#sound-count{position:absolute;top:16px;right:16px;z-index:20;font-size:.52rem;letter-spacing:.06em;color:rgba(0,0,0,.2);font-weight:300}
+
+/* Modal */
+.modal-overlay{position:absolute;inset:0;z-index:200;background:rgba(0,0,0,.25);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .25s}
+.modal-overlay.show{opacity:1;pointer-events:auto}
+.modal-box{background:#fff;border-radius:14px;padding:28px 22px;max-width:340px;width:85%;max-height:80vh;overflow-y:auto;box-shadow:0 16px 48px rgba(0,0,0,.12)}
+.modal-box h2{font-size:1.05rem;font-weight:300;letter-spacing:.12em;margin-bottom:4px;color:#333}
+.modal-box h3{font-size:.65rem;font-weight:300;letter-spacing:.1em;color:#aaa;margin-bottom:14px;text-transform:uppercase}
+.modal-box p{font-size:.76rem;line-height:1.75;color:#555;margin-bottom:8px}
+.modal-box .close-btn{display:block;margin:14px auto 0;padding:7px 22px;border:1px solid #ddd;border-radius:20px;background:transparent;cursor:pointer;font-size:.68rem;color:#777;letter-spacing:.05em;transition:background .15s}
+.modal-box .close-btn:hover{background:#f5f5f5}
+
+/* Grid */
+#grid-modal .modal-box{max-width:420px;padding:20px 16px;max-height:85vh}
+.grid-container{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin:10px 0;max-height:60vh;overflow-y:auto;padding:4px}
+.grid-item{aspect-ratio:1;border-radius:50%;cursor:pointer;position:relative;overflow:hidden;border:2px solid transparent;transition:border-color .2s,transform .15s}
+.grid-item:hover{transform:scale(1.06)}
+.grid-item:active{transform:scale(.95)}
+.grid-item.used{border-color:rgba(80,140,255,.5)}
+.grid-item.disabled{opacity:.35;pointer-events:none}
+.grid-item img{width:100%;height:100%;border-radius:50%;object-fit:cover}
+.grid-item-label{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:.38rem;color:#fff;background:rgba(0,0,0,.45);padding:2px 1px;line-height:1.2;letter-spacing:.02em}
+
+/* Share */
+#share-modal .mix-info{font-size:.7rem;background:#f8f8f5;border-radius:8px;padding:12px;margin:10px 0;color:#555;line-height:1.6;white-space:pre-wrap}
+
+/* Sound circles */
+.sound-circle{position:absolute;border-radius:50%;cursor:grab;will-change:transform,opacity;z-index:3}
+.sound-circle:active{cursor:grabbing}
+.sound-circle img{width:100%;height:100%;border-radius:50%;object-fit:cover;pointer-events:none;animation:disc-spin var(--spin-dur,8s) linear infinite var(--spin-dir,normal)}
+@keyframes disc-spin{to{transform:rotate(360deg)}}
+.sound-circle .artist-label{position:absolute;bottom:-15px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:.46rem;color:rgba(0,0,0,.22);letter-spacing:.04em;pointer-events:none;font-weight:300}
+
+/* Detail modal */
+#detail-modal{background:rgba(0,0,0,.35)}
+#detail-modal .detail-content{display:flex;flex-direction:column;align-items:center;cursor:pointer;padding:20px}
+#detail-modal .detail-img{width:min(52vw,52vh);height:min(52vw,52vh);border-radius:50%;object-fit:cover;box-shadow:0 8px 40px rgba(0,0,0,.2);margin-bottom:20px;animation:disc-spin 8s linear infinite}
+#detail-modal .detail-info{text-align:center;color:rgba(255,255,255,.88)}
+#detail-modal .detail-info p{font-size:.78rem;line-height:1.9;letter-spacing:.04em;font-weight:300}
+#detail-modal .detail-info .label{font-size:.55rem;color:rgba(255,255,255,.45);letter-spacing:.1em;text-transform:uppercase;margin-bottom:2px}
+#detail-modal .detail-hint{font-size:.52rem;color:rgba(255,255,255,.35);margin-top:16px;letter-spacing:.08em}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bg-ring"></div>
+  <canvas id="trail-canvas"></canvas>
+
+  <!-- Start overlay -->
+  <div id="start-overlay">
+    <img class="start-logo" src="INTO_INFINITY_LOGO.png" alt="INTO INFINITY" draggable="false">
+    <h1>INTO INFINITY</h1>
+    <div class="sub">AudioVisual Mixer</div>
+    <div class="tap">Tap anywhere to begin</div>
+  </div>
+
+  <!-- Center infinity -->
+  <div id="infinity-wrap">
+    <img id="infinity-logo" src="INTO_INFINITY_LOGO.png" alt="INTO INFINITY" draggable="false">
+  </div>
+  <div id="freeze-label">FROZEN</div>
+
+  <!-- Export button (shown when frozen) -->
+  <button id="btn-export" class="export-btn">Save Mix (WAV)</button>
+
+  <!-- Buttons -->
+  <div class="corner-btn" id="btn-info">i</div>
+  <div class="corner-btn" id="btn-grid">
+    <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x=".5" y=".5" width="5" height="5" rx=".8"/><rect x="8.5" y=".5" width="5" height="5" rx=".8"/><rect x=".5" y="8.5" width="5" height="5" rx=".8"/><rect x="8.5" y="8.5" width="5" height="5" rx=".8"/></svg>
+  </div>
+  <div id="sound-count"></div>
+
+  <!-- Info Modal -->
+  <div class="modal-overlay" id="info-modal">
+    <div class="modal-box">
+      <h2>INTO INFINITY</h2>
+      <h3>AudioVisual Mixer</h3>
+      <p>An endless chain of creativity. 8-second loop sounds from artists around the world are randomly streamed and layered in real-time.</p>
+      <p><strong>Drag</strong> circles &mdash; closer to center = louder.<br>
+      <strong>Throw</strong> to fling a circle away.<br>
+      <strong>Tap</strong> a circle to see its details.<br>
+      <strong>Tap &infin;</strong> to freeze / unfreeze.</p>
+      <p style="color:#bbb;font-size:.62rem;margin-top:12px">A project by dublab &times; Creative Commons<br>Licensed under CC BY-NC<br><br>Web version &copy; 2026</p>
+      <button class="close-btn" onclick="closeModal('info-modal')">Close</button>
+    </div>
+  </div>
+
+  <!-- Grid Modal -->
+  <div class="modal-overlay" id="grid-modal">
+    <div class="modal-box">
+      <h2>Loop Collection</h2>
+      <h3>Tap to add to mix (max 4)</h3>
+      <div class="grid-container" id="grid-container"></div>
+      <button class="close-btn" onclick="closeModal('grid-modal')">Close</button>
+    </div>
+  </div>
+
+  <!-- Share Modal -->
+  <div class="modal-overlay" id="share-modal">
+    <div class="modal-box">
+      <h2>Current Mix</h2>
+      <div class="mix-info" id="mix-info"></div>
+      <button class="close-btn" id="copy-btn">Copy to Clipboard</button>
+      <button class="close-btn" onclick="closeModal('share-modal')">Close</button>
+    </div>
+  </div>
+
+  <!-- Detail Modal -->
+  <div class="modal-overlay" id="detail-modal">
+    <div class="detail-content" id="detail-content"></div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ======== CONSTANTS ======== */
+const TOTAL = 157;          // files 0..156
+const MAX   = 4;            // max simultaneous sounds
+const DRIFT_AT  = 25000;    // ms before drift phase begins
+const ENTRY_DUR = 600;      // ms for entry animation
+const EAR = 'EAR/';
+const EYE = 'EYE/';
+const BG_R = 245, BG_G = 245, BG_B = 240; // background colour for trail fade
+
+/* Build shuffled index arrays for random pairing */
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+let earOrder = shuffle([...Array(TOTAL).keys()]);
+let eyeOrder = shuffle([...Array(TOTAL).keys()]);
+let spawnIdx = 0;
+
+/* ======== STATE ======== */
+let started = false;
+let frozen = false;
+const active = new Map();   // uid -> sound object
+let nxtTimer = null;
+let uid_ = 0;
+let dragTgt = null, dOX = 0, dOY = 0, dHist = [];
+const activeEars = new Set();
+let lastT = 0;
+let detailTarget = null;    // circle currently shown in detail view
+let clickStart = null;      // {x, y, t} for click vs drag detection
+let exporting = false;
+
+/* ======== TRAIL CANVAS ======== */
+const trailCanvas = document.getElementById('trail-canvas');
+const trailCtx = trailCanvas.getContext('2d');
+let trailDpr = 1;
+
+function resizeTrail() {
+  trailDpr = window.devicePixelRatio || 1;
+  const app = document.getElementById('app');
+  const w = app.clientWidth, h = app.clientHeight;
+  trailCanvas.width = w * trailDpr;
+  trailCanvas.height = h * trailDpr;
+  trailCtx.setTransform(trailDpr, 0, 0, trailDpr, 0, 0);
+}
+
+/* ======== AUDIO ======== */
+function createAudioEl(earIdx) {
+  const a = new Audio();
+  a.src = EAR + earIdx + '.wav';
+  a.loop = true;
+  a.volume = 0;
+  a.preload = 'auto';
+  return a;
+}
+
+/* ======== HELPERS ======== */
+function d2c(x, y, W, H) { return Math.hypot(x - W/2, y - H/2); }
+function easeOut3(t) { return 1 - Math.pow(1 - t, 3); }
+
+function getOrbitR() {
+  const app = document.getElementById('app');
+  const minD = Math.min(app.clientWidth, app.clientHeight);
+  return minD * 0.35 * (0.55 + Math.random() * 0.6);
+}
+
+/* ======== REMOVE ======== */
+function rmSound(uid) {
+  const s = active.get(uid);
+  if (!s) return;
+  activeEars.delete(s.earIdx);
+  try {
+    s.audioEl.volume = 0;
+    setTimeout(() => {
+      try { s.audioEl.pause(); s.audioEl.removeAttribute('src'); s.audioEl.load(); } catch(e) {}
+    }, 200);
+  } catch(e) {}
+  if (s.el.parentNode) s.el.parentNode.removeChild(s.el);
+  active.delete(uid);
+  updCount();
+}
+
+/* ======== SPAWN ======== */
+function pickNext() {
+  for (let tries = 0; tries < TOTAL; tries++) {
+    if (spawnIdx >= TOTAL) {
+      earOrder = shuffle([...Array(TOTAL).keys()]);
+      eyeOrder = shuffle([...Array(TOTAL).keys()]);
+      spawnIdx = 0;
+    }
+    const earIdx = earOrder[spawnIdx];
+    const eyeIdx = eyeOrder[spawnIdx];
+    spawnIdx++;
+    if (!activeEars.has(earIdx)) return { earIdx, eyeIdx };
+  }
+  return null;
+}
+
+async function spawn(earIdxOverride, eyeIdxOverride) {
+  if (active.size >= MAX) return;
+
+  let earIdx, eyeIdx;
+  if (earIdxOverride !== undefined) {
+    earIdx = earIdxOverride;
+    eyeIdx = eyeIdxOverride !== undefined ? eyeIdxOverride : Math.floor(Math.random() * TOTAL);
+  } else {
+    const pick = pickNext();
+    if (!pick) return;
+    earIdx = pick.earIdx;
+    eyeIdx = pick.eyeIdx;
+  }
+
+  if (activeEars.has(earIdx)) return;
+  activeEars.add(earIdx);
+
+  const uid = uid_++;
+  const app = document.getElementById('app');
+  const W = app.clientWidth, H = app.clientHeight;
+
+  // Orbit parameters — speed reduced to 0.75x
+  const orbitR = getOrbitR();
+  const angle = Math.random() * Math.PI * 2;
+  const dir = Math.random() < 0.5 ? 1 : -1;
+  const angSpeed = dir * (0.35 + Math.random() * 0.4) * 0.75;
+
+  const cx = W / 2, cy = H / 2;
+  const initX = cx + orbitR * Math.cos(angle);
+  const initY = cy + orbitR * Math.sin(angle);
+
+  // Fixed large size
+  const bsz = W < 500 ? 105 : 150;
+
+  // Create DOM element
+  const el = document.createElement('div');
+  el.className = 'sound-circle';
+  el.style.width = el.style.height = bsz + 'px';
+  el.style.left = '0';
+  el.style.top = '0';
+  el.style.transform = `translate(${initX - bsz/2}px,${initY - bsz/2}px) scale(0.2)`;
+  el.style.opacity = '0';
+  el.style.boxShadow = '0 3px 18px rgba(0,0,0,.1)';
+
+  const img = document.createElement('img');
+  img.src = EYE + eyeIdx + '.png';
+  img.draggable = false;
+  const spinDur = (4 + Math.random() * 8).toFixed(1);
+  const spinDir = Math.random() < 0.5 ? 'normal' : 'reverse';
+  img.style.setProperty('--spin-dur', spinDur + 's');
+  img.style.setProperty('--spin-dir', spinDir);
+  el.appendChild(img);
+
+  const lbl = document.createElement('div');
+  lbl.className = 'artist-label';
+  lbl.textContent = '#' + earIdx;
+  el.appendChild(lbl);
+
+  app.appendChild(el);
+  el.dataset.uid = uid;
+
+  // Create audio
+  const audioEl = createAudioEl(earIdx);
+  try {
+    await audioEl.play();
+  } catch(e) {
+    console.warn('Failed to play audio', earIdx, e);
+    activeEars.delete(earIdx);
+    if (el.parentNode) el.parentNode.removeChild(el);
+    return;
+  }
+
+  const obj = {
+    el, audioEl, earIdx, eyeIdx,
+    born: Date.now(), bsz, uid,
+    x: initX - bsz/2, y: initY - bsz/2,
+    angle, orbitR, angSpeed,
+    phase: 'orbit',           // orbit | drift | dragging | thrown
+    driftVx: 0, driftVy: 0,
+    throwVx: 0, throwVy: 0
+  };
+  active.set(uid, obj);
+  updCount();
+}
+
+/* ======== TRAIL DRAWING ======== */
+function drawTrailFrame(W, H) {
+  // Fade previous content toward background colour
+  trailCtx.fillStyle = `rgba(${BG_R},${BG_G},${BG_B},0.1)`;
+  trailCtx.fillRect(0, 0, W, H);
+
+  // Draw each active circle as a faded afterimage
+  active.forEach(s => {
+    if (s.phase === 'dragging') return;
+    const age = Date.now() - s.born;
+    if (age < ENTRY_DUR) return;
+    const img = s.el.querySelector('img');
+    if (!img || !img.complete || !img.naturalWidth) return;
+
+    // Get current rotation from CSS animation
+    let rot = 0;
+    try {
+      const m = new DOMMatrix(getComputedStyle(img).transform);
+      rot = Math.atan2(m.b, m.a);
+    } catch(e) {}
+
+    const cx = s.x + s.bsz / 2;
+    const cy = s.y + s.bsz / 2;
+    const r = s.bsz / 2;
+
+    trailCtx.save();
+    trailCtx.globalAlpha = 0.16;
+    trailCtx.translate(cx, cy);
+    trailCtx.rotate(rot);
+    trailCtx.beginPath();
+    trailCtx.arc(0, 0, r, 0, Math.PI * 2);
+    trailCtx.clip();
+    trailCtx.drawImage(img, -r, -r, s.bsz, s.bsz);
+    trailCtx.restore();
+  });
+}
+
+/* ======== ANIMATION LOOP ======== */
+function animate(time) {
+  requestAnimationFrame(animate);
+  if (!started) return;
+  // Pause all movement while detail view is open (audio & self-spin continue)
+  if (detailTarget) return;
+  if (!lastT) lastT = time;
+  const dt = Math.min((time - lastT) / 1000, 0.1);
+  lastT = time;
+
+  const app = document.getElementById('app');
+  const W = app.clientWidth, H = app.clientHeight;
+  const cx = W / 2, cy = H / 2;
+  const maxD = Math.hypot(cx, cy);
+  const now = Date.now();
+  const toRemove = [];
+
+  active.forEach((s, uid) => {
+    const age = now - s.born;
+    const entryT = Math.min(1, age / ENTRY_DUR);
+    const entryE = easeOut3(entryT);
+
+    /* ---- DRAGGING ---- */
+    if (s.phase === 'dragging') {
+      const dist = d2c(s.x + s.bsz/2, s.y + s.bsz/2, W, H);
+      const vol = Math.max(0, 1 - dist / maxD);
+      try { s.audioEl.volume = vol * vol * 0.25; } catch(e) {}
+      s.el.style.opacity = (0.35 + vol * 0.65).toFixed(2);
+      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${(0.82 + vol * 0.18).toFixed(3)})`;
+      return;
+    }
+
+    /* ---- THROWN ---- */
+    if (s.phase === 'thrown') {
+      const friction = Math.pow(0.4, dt);
+      s.throwVx *= friction;
+      s.throwVy *= friction;
+      s.x += s.throwVx * dt;
+      s.y += s.throwVy * dt;
+
+      const dist = d2c(s.x + s.bsz/2, s.y + s.bsz/2, W, H);
+      const vol = Math.max(0, 1 - dist / maxD);
+      try { s.audioEl.volume = vol * vol * 0.25; } catch(e) {}
+      s.el.style.opacity = (0.35 + vol * 0.65).toFixed(2);
+      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${(0.82 + vol * 0.18).toFixed(3)})`;
+
+      if (Math.hypot(s.throwVx, s.throwVy) < 15) {
+        const dx = s.x + s.bsz/2 - cx;
+        const dy = s.y + s.bsz/2 - cy;
+        s.orbitR = Math.max(30, Math.hypot(dx, dy));
+        s.angle = Math.atan2(dy, dx);
+        s.born = Date.now();
+        s.phase = 'orbit';
+      }
+
+      const scx = s.x + s.bsz/2, scy = s.y + s.bsz/2;
+      if (scx < -s.bsz || scx > W + s.bsz || scy < -s.bsz || scy > H + s.bsz) {
+        toRemove.push(uid);
+      }
+      return;
+    }
+
+    /* ---- ORBIT ---- */
+    if (s.phase === 'orbit') {
+      if (!frozen) s.angle += s.angSpeed * dt;
+
+      s.x = cx + s.orbitR * Math.cos(s.angle) - s.bsz / 2;
+      s.y = cy + s.orbitR * Math.sin(s.angle) - s.bsz / 2;
+
+      const dist = d2c(s.x + s.bsz/2, s.y + s.bsz/2, W, H);
+      const vol = Math.max(0, 1 - dist / maxD);
+      try { s.audioEl.volume = vol * vol * 0.25; } catch(e) {}
+
+      const entryScale = 0.2 + 0.8 * entryE;
+      s.el.style.opacity = ((0.35 + vol * 0.65) * entryE).toFixed(2);
+      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${((0.82 + vol * 0.18) * entryScale).toFixed(3)})`;
+
+      if (!frozen && age > DRIFT_AT) {
+        s.phase = 'drift';
+        const speed = Math.abs(s.angSpeed) * s.orbitR;
+        const sign = s.angSpeed > 0 ? 1 : -1;
+        const tVx = -Math.sin(s.angle) * speed * sign;
+        const tVy =  Math.cos(s.angle) * speed * sign;
+        const rVx = Math.cos(s.angle) * 25;
+        const rVy = Math.sin(s.angle) * 25;
+        s.driftVx = tVx * 0.5 + rVx;
+        s.driftVy = tVy * 0.5 + rVy;
+      }
+      return;
+    }
+
+    /* ---- DRIFT ---- */
+    if (s.phase === 'drift') {
+      s.x += s.driftVx * dt;
+      s.y += s.driftVy * dt;
+
+      const dist = d2c(s.x + s.bsz/2, s.y + s.bsz/2, W, H);
+      const vol = Math.max(0, 1 - dist / maxD);
+      try { s.audioEl.volume = vol * vol * 0.25; } catch(e) {}
+
+      s.el.style.opacity = (0.35 + vol * 0.65).toFixed(2);
+      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${(0.82 + vol * 0.18).toFixed(3)})`;
+
+      const scx = s.x + s.bsz/2, scy = s.y + s.bsz/2;
+      if (scx < -s.bsz || scx > W + s.bsz || scy < -s.bsz || scy > H + s.bsz) {
+        toRemove.push(uid);
+      }
+      return;
+    }
+  });
+
+  toRemove.forEach(uid => rmSound(uid));
+
+  // Draw trail afterimages
+  drawTrailFrame(W, H);
+}
+
+function updCount() {
+  document.getElementById('sound-count').textContent =
+    active.size > 0 ? active.size + ' / ' + MAX : '';
+}
+
+/* ======== STREAMING ======== */
+function schedNext() {
+  if (frozen) return;
+  nxtTimer = setTimeout(() => {
+    if (!frozen && active.size < MAX) spawn();
+    schedNext();
+  }, 4500 + Math.random() * 3500);
+}
+
+/* ======== POINTER ======== */
+function pPos(e) {
+  if (e.touches && e.touches.length) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  return { x: e.clientX, y: e.clientY };
+}
+
+function findAt(x, y) {
+  const arr = [...active.values()].reverse();
+  for (const s of arr) {
+    const scx = s.x + s.bsz/2, scy = s.y + s.bsz/2;
+    if (Math.hypot(x - scx, y - scy) < s.bsz/2 + 12) return s;
+  }
+  return null;
+}
+
+function onDown(e) {
+  if (!started || detailTarget) return;
+  const pos = pPos(e);
+
+  const ir = document.getElementById('infinity-wrap').getBoundingClientRect();
+  if (pos.x >= ir.left - 15 && pos.x <= ir.right + 15 &&
+      pos.y >= ir.top - 15  && pos.y <= ir.bottom + 15) {
+    togFreeze();
+    return;
+  }
+
+  const s = findAt(pos.x, pos.y);
+  if (s && (s.phase === 'orbit' || s.phase === 'drift' || s.phase === 'thrown')) {
+    dragTgt = s;
+    s.prevPhase = s.phase;
+    s.phase = 'dragging';
+    dOX = pos.x - s.x;
+    dOY = pos.y - s.y;
+    clickStart = { x: pos.x, y: pos.y, t: Date.now() };
+    dHist = [{ x: pos.x, y: pos.y, t: Date.now() }];
+    s.el.style.zIndex = '15';
+    e.preventDefault();
+  }
+}
+
+function onMove(e) {
+  if (!dragTgt) return;
+  e.preventDefault();
+  const pos = pPos(e);
+  dragTgt.x = pos.x - dOX;
+  dragTgt.y = pos.y - dOY;
+  dHist.push({ x: pos.x, y: pos.y, t: Date.now() });
+  if (dHist.length > 6) dHist.shift();
+}
+
+function onUp() {
+  if (!dragTgt) return;
+  const s = dragTgt;
+  s.el.style.zIndex = '';
+
+  // Click detection (tap → open detail)
+  if (clickStart) {
+    const last = dHist.length > 0 ? dHist[dHist.length - 1] : clickStart;
+    const dist = Math.hypot(last.x - clickStart.x, last.y - clickStart.y);
+    const dur = Date.now() - clickStart.t;
+    if (dist < 10 && dur < 400) {
+      s.phase = s.prevPhase || 'orbit';
+      dragTgt = null; dHist = []; clickStart = null;
+      openDetail(s);
+      return;
+    }
+  }
+  clickStart = null;
+
+  // Throw detection
+  if (dHist.length >= 2) {
+    const last = dHist[dHist.length - 1], first = dHist[0];
+    const dt = (last.t - first.t) / 1000;
+    if (dt > 0) {
+      const vx = (last.x - first.x) / dt;
+      const vy = (last.y - first.y) / dt;
+      if (Math.hypot(vx, vy) > 200) {
+        s.phase = 'thrown';
+        s.throwVx = vx;
+        s.throwVy = vy;
+        dragTgt = null; dHist = [];
+        return;
+      }
+    }
+  }
+
+  // No throw: resume orbit
+  const app = document.getElementById('app');
+  const cxS = app.clientWidth / 2, cyS = app.clientHeight / 2;
+  const dx = s.x + s.bsz/2 - cxS;
+  const dy = s.y + s.bsz/2 - cyS;
+  s.orbitR = Math.max(30, Math.hypot(dx, dy));
+  s.angle = Math.atan2(dy, dx);
+  if (s.prevPhase === 'drift' || s.prevPhase === 'thrown') s.born = Date.now();
+  s.phase = 'orbit';
+  dragTgt = null; dHist = [];
+}
+
+/* ======== FREEZE ======== */
+function togFreeze() {
+  frozen = !frozen;
+  const appEl = document.getElementById('app');
+  const w = document.getElementById('infinity-wrap');
+  const l = document.getElementById('freeze-label');
+  const ex = document.getElementById('btn-export');
+  if (frozen) {
+    appEl.classList.add('frozen');
+    w.classList.add('frozen');
+    l.classList.add('show');
+    if (active.size > 0) ex.classList.add('show');
+    clearTimeout(nxtTimer);
+  } else {
+    appEl.classList.remove('frozen');
+    w.classList.remove('frozen');
+    l.classList.remove('show');
+    ex.classList.remove('show');
+    schedNext();
+  }
+}
+
+/* ======== DETAIL VIEW ======== */
+function openDetail(s) {
+  detailTarget = s;
+  lastT = 0;
+
+  // Solo: mute all except selected
+  active.forEach(o => {
+    try {
+      if (o.uid === s.uid) {
+        o.audioEl.volume = 0.25;
+      } else {
+        o._savedVol = o.audioEl.volume;
+        o.audioEl.volume = 0;
+      }
+    } catch(e) {}
+  });
+
+  const dc = document.getElementById('detail-content');
+  dc.innerHTML = '';
+
+  const img = document.createElement('img');
+  img.className = 'detail-img';
+  img.src = EYE + s.eyeIdx + '.png';
+  dc.appendChild(img);
+
+  const info = document.createElement('div');
+  info.className = 'detail-info';
+  info.innerHTML =
+    '<div class="label">Image</div><p>' + EYE + s.eyeIdx + '.png</p>' +
+    '<div class="label">Audio</div><p>' + EAR + s.earIdx + '.wav</p>';
+  dc.appendChild(info);
+
+  const hint = document.createElement('div');
+  hint.className = 'detail-hint';
+  hint.textContent = 'Tap to close';
+  dc.appendChild(hint);
+
+  openModal('detail-modal');
+}
+
+function closeDetail() {
+  active.forEach(o => {
+    if (detailTarget && o.uid !== detailTarget.uid && o._savedVol !== undefined) {
+      try { o.audioEl.volume = o._savedVol; } catch(e) {}
+      delete o._savedVol;
+    }
+  });
+  detailTarget = null;
+  closeModal('detail-modal');
+}
+
+/* ======== WAV EXPORT ======== */
+
+function encodeWav(left, right, sampleRate) {
+  const numSamples = left.length;
+  const dataSize = numSamples * 2 * 2; // 2 channels, 16-bit
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const v = new DataView(buffer);
+  function ws(off, str) { for (let i = 0; i < str.length; i++) v.setUint8(off + i, str.charCodeAt(i)); }
+  ws(0, 'RIFF');
+  v.setUint32(4, 36 + dataSize, true);
+  ws(8, 'WAVE');
+  ws(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 2, true);
+  v.setUint32(24, sampleRate, true);
+  v.setUint32(28, sampleRate * 4, true);
+  v.setUint16(32, 4, true);
+  v.setUint16(34, 16, true);
+  ws(36, 'data');
+  v.setUint32(40, dataSize, true);
+  let off = 44;
+  for (let i = 0; i < numSamples; i++) {
+    let ls = Math.max(-1, Math.min(1, left[i]));
+    let rs = Math.max(-1, Math.min(1, right[i]));
+    v.setInt16(off, ls * 0x7FFF | 0, true); off += 2;
+    v.setInt16(off, rs * 0x7FFF | 0, true); off += 2;
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+async function exportMix() {
+  if (active.size === 0 || exporting) return;
+  exporting = true;
+  const btn = document.getElementById('btn-export');
+  const origText = btn.textContent;
+  btn.classList.add('recording');
+  btn.textContent = 'Mixing...';
+
+  try {
+    const SR = 44100;
+    const DUR = 8;
+    const LEN = SR * DUR;
+    const offCtx = new OfflineAudioContext(2, LEN, SR);
+
+    const loads = [];
+    active.forEach(s => {
+      const vol = s.audioEl.volume;
+      const p = fetch(EAR + s.earIdx + '.wav')
+        .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+        .then(ab => offCtx.decodeAudioData(ab))
+        .then(buf => {
+          const src = offCtx.createBufferSource();
+          src.buffer = buf;
+          src.loop = true;
+          const g = offCtx.createGain();
+          g.gain.value = vol * 4; // boost from max 0.25 to ~1.0
+          src.connect(g);
+          g.connect(offCtx.destination);
+          src.start(0);
+        });
+      loads.push(p);
+    });
+
+    await Promise.all(loads);
+    const rendered = await offCtx.startRendering();
+
+    const L = rendered.getChannelData(0);
+    const R = rendered.numberOfChannels > 1 ? rendered.getChannelData(1) : L;
+
+    // Normalize
+    let peak = 0;
+    for (let i = 0; i < L.length; i++) peak = Math.max(peak, Math.abs(L[i]), Math.abs(R[i]));
+    if (peak > 0.001) {
+      const g = 0.92 / peak;
+      for (let i = 0; i < L.length; i++) { L[i] *= g; R[i] *= g; }
+    }
+
+    downloadBlob(encodeWav(L, R, SR), 'INTO_INFINITY_mix.wav');
+
+  } catch(e) {
+    console.error('Export failed:', e);
+    alert('エクスポートに失敗しました: ' + e.message);
+  }
+
+  btn.textContent = origText;
+  btn.classList.remove('recording');
+  exporting = false;
+}
+
+/* ======== START ======== */
+function startApp() {
+  if (started) return;
+  started = true;
+  resizeTrail();
+  document.getElementById('start-overlay').classList.add('hidden');
+  spawn();
+  schedNext();
+}
+
+/* ======== MODALS ======== */
+function openModal(id) { document.getElementById(id).classList.add('show'); }
+function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+function buildGrid() {
+  const c = document.getElementById('grid-container');
+  c.innerHTML = '';
+  for (let i = 0; i < TOTAL; i++) {
+    const it = document.createElement('div');
+    it.className = 'grid-item';
+    if (activeEars.has(i)) it.classList.add('used');
+    if (active.size >= MAX && !activeEars.has(i)) it.classList.add('disabled');
+
+    const img = document.createElement('img');
+    img.src = EYE + i + '.png';
+    img.loading = 'lazy';
+    img.draggable = false;
+    it.appendChild(img);
+
+    const lb = document.createElement('div');
+    lb.className = 'grid-item-label';
+    lb.textContent = '#' + i;
+    it.appendChild(lb);
+
+    const earIdx = i;
+    it.addEventListener('click', () => {
+      if (active.size < MAX && started && !activeEars.has(earIdx)) {
+        const eyeIdx = Math.floor(Math.random() * TOTAL);
+        spawn(earIdx, eyeIdx);
+        closeModal('grid-modal');
+      }
+    });
+    c.appendChild(it);
+  }
+}
+
+function updShare() {
+  const info = document.getElementById('mix-info');
+  if (!active.size) { info.textContent = 'No sounds playing.'; return; }
+  const parts = [];
+  active.forEach(s => parts.push('Loop #' + s.earIdx + ' \u00D7 Image #' + s.eyeIdx));
+  info.textContent = 'INTO INFINITY Mix:\n' + parts.join('\n') + '\n#intoinfinity';
+}
+
+/* ======== EVENTS ======== */
+document.getElementById('start-overlay').addEventListener('click', startApp);
+document.getElementById('start-overlay').addEventListener('touchend', e => { e.preventDefault(); startApp(); });
+
+const appEl = document.getElementById('app');
+appEl.addEventListener('mousedown', onDown);
+document.addEventListener('mousemove', onMove);
+document.addEventListener('mouseup', onUp);
+appEl.addEventListener('touchstart', onDown, { passive: false });
+document.addEventListener('touchmove', onMove, { passive: false });
+document.addEventListener('touchend', onUp);
+
+document.getElementById('btn-info').addEventListener('click', e => { e.stopPropagation(); openModal('info-modal'); });
+document.getElementById('btn-grid').addEventListener('click', e => { e.stopPropagation(); buildGrid(); openModal('grid-modal'); });
+document.getElementById('btn-export').addEventListener('click', e => { e.stopPropagation(); exportMix(); });
+
+document.getElementById('copy-btn').addEventListener('click', () => {
+  const txt = document.getElementById('mix-info').textContent;
+  navigator.clipboard.writeText(txt).then(() => {
+    document.getElementById('copy-btn').textContent = 'Copied!';
+    setTimeout(() => { document.getElementById('copy-btn').textContent = 'Copy to Clipboard'; }, 1200);
+  }).catch(() => {});
+});
+
+// Detail modal: tap anywhere to close
+document.getElementById('detail-modal').addEventListener('click', () => {
+  if (detailTarget) closeDetail();
+});
+
+['info-modal', 'grid-modal', 'share-modal'].forEach(id => {
+  document.getElementById(id).addEventListener('click', e => {
+    if (e.target.classList.contains('modal-overlay')) closeModal(id);
+  });
+});
+
+window.addEventListener('resize', resizeTrail);
+document.addEventListener('contextmenu', e => e.preventDefault());
+
+// Start animation loop immediately (runs idle until startApp)
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>
