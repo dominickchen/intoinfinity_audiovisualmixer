@@ -4,17 +4,9 @@ const CACHE_NAME = 'intoinfinity-v1';
 const PRECACHE = [
   './',
   './index.html',
-  './INTO_INFINITY_LOGO.png'
+  './INTO_INFINITY_LOGO.png',
+  './paring.json'
 ];
-
-// Build full asset lists for EAR and EYE (0..156)
-const TOTAL = 157;
-const EAR_ASSETS = [];
-const EYE_ASSETS = [];
-for (let i = 0; i < TOTAL; i++) {
-  EAR_ASSETS.push('./EAR/' + i + '.wav');
-  EYE_ASSETS.push('./EYE/' + i + '.png');
-}
 
 // Install: pre-cache core files only (media cached on demand)
 self.addEventListener('install', event => {
@@ -39,8 +31,8 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   const path = url.pathname;
 
-  // EAR and EYE assets: cache-first strategy
-  if (path.includes('/EAR/') || path.includes('/EYE/') || path.endsWith('INTO_INFINITY_LOGO.png')) {
+  // EYE_EAR assets: cache-first strategy
+  if (path.includes('/EYE_EAR/') || path.endsWith('INTO_INFINITY_LOGO.png') || path.endsWith('paring.json')) {
     event.respondWith(
       caches.open(CACHE_NAME).then(cache =>
         cache.match(event.request).then(cached => {

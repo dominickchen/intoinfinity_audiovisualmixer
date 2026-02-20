@@ -180,12 +180,11 @@ if ('serviceWorker' in navigator) {
 }
 
 /* ======== CONSTANTS ======== */
-const TOTAL = 157;          // files 0..156
+const TOTAL = 157;          // pairs 0..156
 const MAX   = 4;            // max simultaneous sounds
 const DRIFT_AT  = 25000;    // ms before drift phase begins
 const ENTRY_DUR = 600;      // ms for entry animation
-const EAR = 'EAR/';
-const EYE = 'EYE/';
+const ASSET_DIR = 'EYE_EAR/';
 const BG_R = 245, BG_G = 245, BG_B = 240; // background colour for trail fade
 
 /* ======== GRAVITY CONSTANTS ======== */
@@ -193,7 +192,18 @@ const GRAVITY_G = 4500;       // gravitational constant
 const GRAVITY_MIN_DIST = 60;  // minimum distance clamp
 const GRAVITY_DAMPING = 0.97; // damping factor per frame
 
-/* Build shuffled index arrays for random pairing */
+/* ======== PAIRING DATA (loaded from paring.json) ======== */
+let PAIRS = []; // will be populated on load
+
+async function loadPairs() {
+  try {
+    const r = await fetch('paring.json');
+    PAIRS = await r.json();
+  } catch(e) {
+    console.error('Failed to load paring.json:', e);
+  }
+}
+
 function shuffle(arr) {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -202,8 +212,7 @@ function shuffle(arr) {
   return arr;
 }
 
-let earOrder = shuffle([...Array(TOTAL).keys()]);
-let eyeOrder = shuffle([...Array(TOTAL).keys()]);
+let pairOrder = shuffle([...Array(TOTAL).keys()]);
 let spawnIdx = 0;
 
 /* ======== WEB AUDIO CONTEXT FOR ANALYSER ======== */
@@ -224,7 +233,7 @@ const active = new Map();   // uid -> sound object
 let nxtTimer = null;
 let uid_ = 0;
 let dragTgt = null, dOX = 0, dOY = 0, dHist = [];
-const activeEars = new Set();
+const activePairs = new Set();
 let lastT = 0;
 let detailTarget = null;
 let clickStart = null;
@@ -245,9 +254,9 @@ function resizeTrail() {
 }
 
 /* ======== AUDIO (with Web Audio API analyser) ======== */
-function createAudioEl(earIdx) {
+function createAudioEl(earFile) {
   const a = new Audio();
-  a.src = EAR + earIdx + '.wav';
+  a.src = ASSET_DIR + earFile;
   a.loop = true;
   a.volume = 0;
   a.preload = 'auto';
@@ -285,7 +294,7 @@ function getOrbitR() {
 function rmSound(uid) {
   const s = active.get(uid);
   if (!s) return;
-  activeEars.delete(s.earIdx);
+  activePairs.delete(s.pairId);
   try {
     s.audioEl.volume = 0;
     setTimeout(() => {
@@ -301,34 +310,32 @@ function rmSound(uid) {
 function pickNext() {
   for (let tries = 0; tries < TOTAL; tries++) {
     if (spawnIdx >= TOTAL) {
-      earOrder = shuffle([...Array(TOTAL).keys()]);
-      eyeOrder = shuffle([...Array(TOTAL).keys()]);
+      pairOrder = shuffle([...Array(TOTAL).keys()]);
       spawnIdx = 0;
     }
-    const earIdx = earOrder[spawnIdx];
-    const eyeIdx = eyeOrder[spawnIdx];
+    const pairId = pairOrder[spawnIdx];
     spawnIdx++;
-    if (!activeEars.has(earIdx)) return { earIdx, eyeIdx };
+    if (!activePairs.has(pairId)) return pairId;
   }
   return null;
 }
 
-async function spawn(earIdxOverride, eyeIdxOverride) {
-  if (active.size >= MAX) return;
+async function spawn(pairIdOverride) {
+  if (active.size >= MAX || PAIRS.length === 0) return;
 
-  let earIdx, eyeIdx;
-  if (earIdxOverride !== undefined) {
-    earIdx = earIdxOverride;
-    eyeIdx = eyeIdxOverride !== undefined ? eyeIdxOverride : Math.floor(Math.random() * TOTAL);
+  let pairId;
+  if (pairIdOverride !== undefined) {
+    pairId = pairIdOverride;
   } else {
-    const pick = pickNext();
-    if (!pick) return;
-    earIdx = pick.earIdx;
-    eyeIdx = pick.eyeIdx;
+    pairId = pickNext();
+    if (pairId === null) return;
   }
 
-  if (activeEars.has(earIdx)) return;
-  activeEars.add(earIdx);
+  if (activePairs.has(pairId)) return;
+  activePairs.add(pairId);
+
+  const pair = PAIRS[pairId];
+  if (!pair) { activePairs.delete(pairId); return; }
 
   const uid = uid_++;
   const app = document.getElementById('app');
@@ -358,7 +365,7 @@ async function spawn(earIdxOverride, eyeIdxOverride) {
   el.style.boxShadow = '0 3px 18px rgba(0,0,0,.1)';
 
   const img = document.createElement('img');
-  img.src = EYE + eyeIdx + '.png';
+  img.src = ASSET_DIR + pair.eye;
   img.draggable = false;
   const spinDur = (4 + Math.random() * 8).toFixed(1);
   const spinDir = Math.random() < 0.5 ? 'normal' : 'reverse';
@@ -368,19 +375,19 @@ async function spawn(earIdxOverride, eyeIdxOverride) {
 
   const lbl = document.createElement('div');
   lbl.className = 'artist-label';
-  lbl.textContent = '#' + earIdx;
+  lbl.textContent = '#' + pairId;
   el.appendChild(lbl);
 
   app.appendChild(el);
   el.dataset.uid = uid;
 
   // Create audio
-  const audioEl = createAudioEl(earIdx);
+  const audioEl = createAudioEl(pair.ear);
   try {
     await audioEl.play();
   } catch(e) {
-    console.warn('Failed to play audio', earIdx, e);
-    activeEars.delete(earIdx);
+    console.warn('Failed to play audio', pair.ear, e);
+    activePairs.delete(pairId);
     if (el.parentNode) el.parentNode.removeChild(el);
     return;
   }
@@ -390,7 +397,7 @@ async function spawn(earIdxOverride, eyeIdxOverride) {
   const analyserData = analyser ? new Uint8Array(analyser.frequencyBinCount) : null;
 
   const obj = {
-    el, audioEl, earIdx, eyeIdx,
+    el, audioEl, pairId, pair,
     born: Date.now(), bsz, uid,
     x: initX - bsz/2, y: initY - bsz/2,
     angle, orbitR, angSpeed,
@@ -695,15 +702,21 @@ function findAt(x, y) {
   return null;
 }
 
+function anyModalOpen() {
+  return document.querySelector('.modal-overlay.show') !== null;
+}
+
 function onDown(e) {
-  if (!started || detailTarget) return;
+  if (!started || detailTarget || anyModalOpen()) return;
   const pos = pPos(e);
 
-  const ir = document.getElementById('infinity-wrap').getBoundingClientRect();
-  if (pos.x >= ir.left - 15 && pos.x <= ir.right + 15 &&
-      pos.y >= ir.top - 15  && pos.y <= ir.bottom + 15) {
-    togFreeze();
-    return;
+  if (!anyModalOpen()) {
+    const ir = document.getElementById('infinity-wrap').getBoundingClientRect();
+    if (pos.x >= ir.left - 15 && pos.x <= ir.right + 15 &&
+        pos.y >= ir.top - 15  && pos.y <= ir.bottom + 15) {
+      togFreeze();
+      return;
+    }
   }
 
   const s = findAt(pos.x, pos.y);
@@ -818,14 +831,14 @@ function openDetail(s) {
 
   const img = document.createElement('img');
   img.className = 'detail-img';
-  img.src = EYE + s.eyeIdx + '.png';
+  img.src = ASSET_DIR + s.pair.eye;
   dc.appendChild(img);
 
   const info = document.createElement('div');
   info.className = 'detail-info';
   info.innerHTML =
-    '<div class="label">Image</div><p>' + EYE + s.eyeIdx + '.png</p>' +
-    '<div class="label">Audio</div><p>' + EAR + s.earIdx + '.wav</p>';
+    '<div class="label">EYE</div><p>' + s.pair.eyeArtist + '</p>' +
+    '<div class="label">EAR</div><p>' + s.pair.earArtist + '</p>';
   dc.appendChild(info);
 
   const hint = document.createElement('div');
@@ -906,7 +919,7 @@ async function exportMix() {
     const loads = [];
     active.forEach(s => {
       const vol = s.audioEl.volume;
-      const p = fetch(EAR + s.earIdx + '.wav')
+      const p = fetch(ASSET_DIR + s.pair.ear)
         .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
         .then(ab => offCtx.decodeAudioData(ab))
         .then(buf => {
@@ -935,7 +948,13 @@ async function exportMix() {
       for (let i = 0; i < L.length; i++) { L[i] *= g; R[i] *= g; }
     }
 
-    downloadBlob(encodeWav(L, R, SR), 'INTO_INFINITY_mix.wav');
+    const nameParts = [];
+    active.forEach(s => {
+      const name = s.pair.earArtist.replace(/\s*\(\d+\)\s*$/, '').trim().replace(/\s+/g, ' & ');
+      nameParts.push(name);
+    });
+    const filename = nameParts.join('_') + '.wav';
+    downloadBlob(encodeWav(L, R, SR), filename);
 
   } catch(e) {
     console.error('Export failed:', e);
@@ -948,11 +967,12 @@ async function exportMix() {
 }
 
 /* ======== START ======== */
-function startApp() {
+async function startApp() {
   if (started) return;
   started = true;
   resizeTrail();
   document.getElementById('start-overlay').classList.add('hidden');
+  await loadPairs();
   spawn();
   schedNext();
 }
@@ -969,13 +989,16 @@ function buildGrid() {
   const c = document.getElementById('grid-container');
   c.innerHTML = '';
   for (let i = 0; i < TOTAL; i++) {
+    const pair = PAIRS[i];
+    if (!pair) continue;
+
     const it = document.createElement('div');
     it.className = 'grid-item';
-    if (activeEars.has(i)) it.classList.add('used');
-    if (active.size >= MAX && !activeEars.has(i)) it.classList.add('disabled');
+    if (activePairs.has(i)) it.classList.add('used');
+    if (active.size >= MAX && !activePairs.has(i)) it.classList.add('disabled');
 
     const img = document.createElement('img');
-    img.src = EYE + i + '.png';
+    img.src = ASSET_DIR + pair.eye;
     img.loading = 'lazy';
     img.draggable = false;
     it.appendChild(img);
@@ -985,11 +1008,10 @@ function buildGrid() {
     lb.textContent = '#' + i;
     it.appendChild(lb);
 
-    const earIdx = i;
+    const pairId = i;
     it.addEventListener('click', () => {
-      if (active.size < MAX && started && !activeEars.has(earIdx)) {
-        const eyeIdx = Math.floor(Math.random() * TOTAL);
-        spawn(earIdx, eyeIdx);
+      if (active.size < MAX && started && !activePairs.has(pairId)) {
+        spawn(pairId);
         closeModal('grid-modal');
       }
     });
@@ -1001,7 +1023,7 @@ function updShare() {
   const info = document.getElementById('mix-info');
   if (!active.size) { info.textContent = 'No sounds playing.'; return; }
   const parts = [];
-  active.forEach(s => parts.push('Loop #' + s.earIdx + ' \u00D7 Image #' + s.eyeIdx));
+  active.forEach(s => parts.push('#' + s.pairId + ' EAR: ' + s.pair.earArtist + ' \u00D7 EYE: ' + s.pair.eyeArtist));
   info.textContent = 'INTO INFINITY Mix:\n' + parts.join('\n') + '\n#intoinfinity';
 }
 
