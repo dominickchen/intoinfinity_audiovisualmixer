@@ -950,10 +950,10 @@ async function exportMix() {
 
     const nameParts = [];
     active.forEach(s => {
-      const name = s.pair.earArtist.replace(/\s*\(\d+\)\s*$/, '').trim().replace(/\s+/g, ' & ');
+      const name = s.pair.earArtist.replace(/\s*\(\d+\)\s*$/, '').trim().replace(/\s+/g, ' ');
       nameParts.push(name);
     });
-    const filename = nameParts.join('_') + '.wav';
+    const filename = nameParts.join(' & ') + '.wav';
     downloadBlob(encodeWav(L, R, SR), filename);
 
   } catch(e) {
