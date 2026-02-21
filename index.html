@@ -91,13 +91,15 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 @keyframes disc-spin{to{transform:rotate(360deg)}}
 .sound-circle .artist-label{position:absolute;bottom:-15px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:.46rem;color:rgba(0,0,0,.22);letter-spacing:.04em;pointer-events:none;font-weight:300}
 
-/* Detail modal */
+/* Detail modal — counter-invert when frozen so image/text show true colours */
 #detail-modal{background:rgba(0,0,0,.35)}
+#app.frozen #detail-modal{filter:invert(1)}
 #detail-modal .detail-content{display:flex;flex-direction:column;align-items:center;cursor:pointer;padding:20px}
 #detail-modal .detail-img{width:min(52vw,52vh);height:min(52vw,52vh);border-radius:50%;object-fit:cover;box-shadow:0 8px 40px rgba(0,0,0,.2);margin-bottom:20px;animation:disc-spin 8s linear infinite}
 #detail-modal .detail-info{text-align:center;color:rgba(255,255,255,.88)}
 #detail-modal .detail-info p{font-size:.78rem;line-height:1.9;letter-spacing:.04em;font-weight:300}
 #detail-modal .detail-info .label{font-size:.55rem;color:rgba(255,255,255,.45);letter-spacing:.1em;text-transform:uppercase;margin-bottom:2px}
+#detail-modal .detail-info .location{font-size:.65rem;color:rgba(255,255,255,.45);margin-left:4px}
 #detail-modal .detail-hint{font-size:.52rem;color:rgba(255,255,255,.35);margin-top:16px;letter-spacing:.08em}
 </style>
 </head>
@@ -140,7 +142,7 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
       <strong>Throw</strong> to fling a circle away.<br>
       <strong>Tap</strong> a circle to see its details.<br>
       <strong>Tap &infin;</strong> to freeze / unfreeze.</p>
-      <p style="color:#bbb;font-size:.62rem;margin-top:12px">A project by dublab &times; Creative Commons<br>Licensed under CC BY-NC<br><br>Web version &copy; 2026</p>
+      <p style="color:#bbb;font-size:.62rem;margin-top:12px">INTO INFINITY project by dublab &times; Creative Commons<br>The original iOS application was conceived by Dominique Chen (Creative Commons Japan), developed by Kensuke Sembo (exonemo) and Hiroshi Okamura (Ages5&Up), and produced by Alex Taisuke Odajima (APPLIYA Inc.)<br><br>All EARs and EYEs are published under CC BY-NC<br><img src="CC_by-nc_icon.png" alt="CC BY-NC" style="width:60px;height:auto;margin-top:6px;opacity:.7"><br><br>This Web port is published as <a href="https://github.com/dominickchen/intoinfinity_audiovisualmixer" target="_blank">OSS</a> since February 2026</p>
       <button class="close-btn" onclick="closeModal('info-modal')">Close</button>
     </div>
   </div>
@@ -592,6 +594,16 @@ function animate(time) {
 
     /* ---- THROWN ---- */
     if (s.phase === 'thrown') {
+      if (frozen) {
+        // Frozen: stop immediately
+        s.phase = 'orbit';
+        const dx2 = s.x + s.bsz/2 - cx;
+        const dy2 = s.y + s.bsz/2 - cy;
+        s.orbitR = Math.max(30, Math.hypot(dx2, dy2));
+        s.angle = Math.atan2(dy2, dx2);
+        s.throwVx = 0; s.throwVy = 0;
+        return;
+      }
       const friction = Math.pow(0.4, dt);
       s.throwVx *= friction;
       s.throwVy *= friction;
@@ -651,6 +663,16 @@ function animate(time) {
 
     /* ---- DRIFT ---- */
     if (s.phase === 'drift') {
+      if (frozen) {
+        // Frozen: stop drift, lock in place as orbit
+        s.phase = 'orbit';
+        const dx2 = s.x + s.bsz/2 - cx;
+        const dy2 = s.y + s.bsz/2 - cy;
+        s.orbitR = Math.max(30, Math.hypot(dx2, dy2));
+        s.angle = Math.atan2(dy2, dx2);
+        s.driftVx = 0; s.driftVy = 0;
+        return;
+      }
       s.x += s.driftVx * dt;
       s.y += s.driftVy * dt;
 
@@ -761,7 +783,7 @@ function onUp() {
   }
   clickStart = null;
 
-  if (dHist.length >= 2) {
+  if (!frozen && dHist.length >= 2) {
     const last = dHist[dHist.length - 1], first = dHist[0];
     const dt = (last.t - first.t) / 1000;
     if (dt > 0) {
@@ -777,6 +799,7 @@ function onUp() {
     }
   }
 
+  // Drop in place (frozen: no inertia; unfrozen: below throw threshold)
   const app = document.getElementById('app');
   const cxS = app.clientWidth / 2, cyS = app.clientHeight / 2;
   const dx = s.x + s.bsz/2 - cxS;
@@ -836,9 +859,11 @@ function openDetail(s) {
 
   const info = document.createElement('div');
   info.className = 'detail-info';
+  const eyeLoc = [s.pair.eyeCity, s.pair.eyeRegion].filter(Boolean).join(', ');
+  const earLoc = [s.pair.earCity, s.pair.earRegion].filter(Boolean).join(', ');
   info.innerHTML =
-    '<div class="label">EYE</div><p>' + s.pair.eyeArtist + '</p>' +
-    '<div class="label">EAR</div><p>' + s.pair.earArtist + '</p>';
+    '<div class="label">EYE</div><p>' + s.pair.eyeArtist + (eyeLoc ? ' <span class="location">' + eyeLoc + '</span>' : '') + '</p>' +
+    '<div class="label">EAR</div><p>' + s.pair.earArtist + (earLoc ? ' <span class="location">' + earLoc + '</span>' : '') + '</p>';
   dc.appendChild(info);
 
   const hint = document.createElement('div');
@@ -950,10 +975,10 @@ async function exportMix() {
 
     const nameParts = [];
     active.forEach(s => {
-      const name = s.pair.earArtist.replace(/\s*\(\d+\)\s*$/, '').trim().replace(/\s+/g, ' ');
+      const name = s.pair.earArtist.replace(/\s*\(\d+\)\s*$/, '').trim().replace(/\s+/g, '_');
       nameParts.push(name);
     });
-    const filename = nameParts.join(' & ') + '.wav';
+    const filename = nameParts.join('_') + '.wav';
     downloadBlob(encodeWav(L, R, SR), filename);
 
   } catch(e) {
@@ -980,6 +1005,11 @@ async function startApp() {
 // Click-to-start overlay
 document.getElementById('start-overlay').addEventListener('click', startApp);
 document.getElementById('start-overlay').addEventListener('touchend', e => { e.preventDefault(); startApp(); });
+
+// Auto-start on FRAMED device (1080x1920)
+if (window.screen.width === 1080 && window.screen.height === 1920) {
+  startApp();
+}
 
 /* ======== MODALS ======== */
 function openModal(id) { document.getElementById(id).classList.add('show'); }
