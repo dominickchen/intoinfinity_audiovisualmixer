@@ -182,12 +182,78 @@ if ('serviceWorker' in navigator) {
 }
 
 /* ======== CONSTANTS ======== */
-const TOTAL = 157;          // pairs 0..156
+let   TOTAL = 157;          // pair count — re-derived from PAIRS.length after load
 const MAX   = 4;            // max simultaneous sounds
 const DRIFT_AT  = 25000;    // ms before drift phase begins
 const ENTRY_DUR = 600;      // ms for entry animation
 const ASSET_DIR = 'EYE_EAR/';
 const BG_R = 245, BG_G = 245, BG_B = 240; // background colour for trail fade
+
+/* ======== TUNING — central tuning table ========
+ * Single place to adjust feel. Spatial values are RATIOS of the reference
+ * scale S = min(appWidth, appHeight) unless noted, so the composition stays
+ * geometrically similar on any screen size / aspect ratio. Some fields are
+ * defined here but only wired up in a later phase (noted inline) — this keeps
+ * the table complete and ready for a future URL-query / debug-UI override.
+ * Original iOS px constants were captured on a ~320px-wide portrait screen,
+ * so ratios below are seeded as (origPx / 320) where relevant.
+ */
+const TUNING = {
+  /* --- object size (px, clamped) — screen-independent via S --- */
+  objDiameterRatio: 0.17,   // disc diameter = clamp(min, ratio*S, max)
+  objDiameterMin:   105,
+  objDiameterMax:   150,
+
+  /* --- spawn orbit placement (ratios of S) --- */
+  orbitRadiusRatio: 0.35,   // base orbit radius
+  orbitJitterBase:  0.55,   // × (base + rand*range)
+  orbitJitterRange: 0.60,
+
+  /* --- audio→visual response (unitless) --- */
+  volumeGain:  0.25,        // audioEl.volume = vol*vol*volumeGain
+  scaleBase:   0.82,        // circle scale   = scaleBase   + vol*scaleVol
+  scaleVol:    0.18,
+  opacityBase: 0.35,        // circle opacity = opacityBase + vol*opacityVol
+  opacityVol:  0.65,
+  breathBase:  0.65,        // breathing scale = breathBase + vibe*breathVol
+  breathVol:   0.85,
+
+  /* --- physics (Phase 1 will wire these into the new attraction model) --- */
+  posLerp:         0.10,    // position ease toward target
+  damping:         0.99,    // drift acceleration decay / frame
+  captureRate:     0.02,    // ease toward target orbit radius
+  tangentialSpeed: 1.2,     // deg/frame orbital spin at full attraction
+  centerOrbitRatio: 2.8,    // center's target orbit radius = radius*2.8
+  objOrbitRatio:    3.0,    // an object's target orbit radius = radius*3
+  centerAreaRatio: 140/320, // center's gravity reach (ratio of S)
+  objAreaRatio:     90/320, // an object's gravity reach (ratio of S)
+  gravityPull:      1.0,    // global attraction multiplier
+
+  /* --- collision avoidance (improvement over original; wired in Phase 1) ---
+   * Objects softly push apart before touching, and near the center overlap is
+   * fully prevented. Enforcement scales with closeness to center (continuous). */
+  separationGap:       1.12,   // desired min center gap = (r1+r2) * gap (~12% space)
+  separationStrength:  0.6,    // soft repulsion gain (visible dodging)
+  separationZoneRatio: 0.40,   // center-distance (ratio of S) where enforcement is full; fades to 0 beyond
+  separationHardCorrect: true, // also hard-correct residual overlap inside the zone
+
+  /* --- audio spatialization / reactivity (Phase 3/4/5) --- */
+  panRange:      1.0,       // stereo pan strength (Phase 3)
+  volSmoothing:  0.10,      // one-pole volume smoothing coeff (Phase 4)
+  volBandRatio:  80/320,    // distance band over which volume fades (Phase 4)
+  sizeReactivity: 1.0,      // VU→size gain (Phase 5)
+  rippleThresh:  0.25,      // VU level that fires a ripple (Phase 5)
+
+  /* --- lifespan (Phase 2) --- */
+  lifeSoft: 64,             // becomes ejectable / attraction weakens
+  lifeHard: 256             // hard removal
+};
+
+/* clamp helper */
+function clamp(min, v, max) { return v < min ? min : v > max ? max : v; }
+
+// Expose for live tuning from the devtools console, e.g. TUNING.objDiameterRatio = 0.22
+window.TUNING = TUNING;
 
 /* ======== GRAVITY CONSTANTS ======== */
 const GRAVITY_G = 4500;       // gravitational constant
@@ -201,6 +267,9 @@ async function loadPairs() {
   try {
     const r = await fetch('paring.json');
     PAIRS = await r.json();
+    TOTAL = PAIRS.length;                          // keep pair count in sync with data
+    pairOrder = shuffle([...Array(TOTAL).keys()]);
+    spawnIdx = 0;
   } catch(e) {
     console.error('Failed to load paring.json:', e);
   }
@@ -232,6 +301,7 @@ function getAudioCtx() {
 let started = false;
 let frozen = false;
 const active = new Map();   // uid -> sound object
+const _ballScratch = [];    // reused each frame to avoid per-frame array allocation
 let nxtTimer = null;
 let uid_ = 0;
 let dragTgt = null, dOX = 0, dOY = 0, dHist = [];
@@ -241,6 +311,9 @@ let detailTarget = null;
 let clickStart = null;
 let exporting = false;
 
+/* ======== CACHED DOM ======== */
+const appEl = document.getElementById('app');
+
 /* ======== TRAIL CANVAS ======== */
 const trailCanvas = document.getElementById('trail-canvas');
 const trailCtx = trailCanvas.getContext('2d');
@@ -248,8 +321,7 @@ let trailDpr = 1;
 
 function resizeTrail() {
   trailDpr = window.devicePixelRatio || 1;
-  const app = document.getElementById('app');
-  const w = app.clientWidth, h = app.clientHeight;
+  const w = appEl.clientWidth, h = appEl.clientHeight;
   trailCanvas.width = w * trailDpr;
   trailCanvas.height = h * trailDpr;
   trailCtx.setTransform(trailDpr, 0, 0, trailDpr, 0, 0);
@@ -287,9 +359,8 @@ function d2c(x, y, W, H) { return Math.hypot(x - W/2, y - H/2); }
 function easeOut3(t) { return 1 - Math.pow(1 - t, 3); }
 
 function getOrbitR() {
-  const app = document.getElementById('app');
-  const minD = Math.min(app.clientWidth, app.clientHeight);
-  return minD * 0.35 * (0.55 + Math.random() * 0.6);
+  const S = Math.min(appEl.clientWidth, appEl.clientHeight);
+  return S * TUNING.orbitRadiusRatio * (TUNING.orbitJitterBase + Math.random() * TUNING.orbitJitterRange);
 }
 
 /* ======== REMOVE ======== */
@@ -340,8 +411,7 @@ async function spawn(pairIdOverride) {
   if (!pair) { activePairs.delete(pairId); return; }
 
   const uid = uid_++;
-  const app = document.getElementById('app');
-  const W = app.clientWidth, H = app.clientHeight;
+  const W = appEl.clientWidth, H = appEl.clientHeight;
 
   // Orbit parameters — base speed reduced (gravity further slows)
   const orbitR = getOrbitR();
@@ -353,8 +423,10 @@ async function spawn(pairIdOverride) {
   const initX = cx + orbitR * Math.cos(angle);
   const initY = cy + orbitR * Math.sin(angle);
 
-  // Fixed large size
-  const bsz = W < 500 ? 105 : 150;
+  // Disc diameter scales with the reference scale S = min(W,H) so the
+  // composition stays similar on any screen, clamped to keep it sensible.
+  const S = Math.min(W, H);
+  const bsz = clamp(TUNING.objDiameterMin, TUNING.objDiameterRatio * S, TUNING.objDiameterMax);
 
   // Create DOM element
   const el = document.createElement('div');
@@ -369,7 +441,7 @@ async function spawn(pairIdOverride) {
   const img = document.createElement('img');
   img.src = ASSET_DIR + pair.eye;
   img.draggable = false;
-  const spinDur = (4 + Math.random() * 8).toFixed(1);
+  const spinDur = parseFloat((4 + Math.random() * 8).toFixed(1)); // seconds per rotation
   const spinDir = Math.random() < 0.5 ? 'normal' : 'reverse';
   img.style.setProperty('--spin-dur', spinDur + 's');
   img.style.setProperty('--spin-dir', spinDir);
@@ -380,7 +452,7 @@ async function spawn(pairIdOverride) {
   lbl.textContent = '#' + pairId;
   el.appendChild(lbl);
 
-  app.appendChild(el);
+  appEl.appendChild(el);
   el.dataset.uid = uid;
 
   // Create audio
@@ -406,6 +478,8 @@ async function spawn(pairIdOverride) {
     phase: 'orbit',           // orbit | drift | dragging | thrown
     driftVx: 0, driftVy: 0,
     throwVx: 0, throwVy: 0,
+    // Disc spin (mirrors the CSS disc-spin animation, used for trail rotation)
+    spinDur, spinDirSign: spinDir === 'reverse' ? -1 : 1,
     // Audio analyser for vibration
     analyser, analyserData,
     vibeAmount: 0  // current vibration amplitude 0-1
@@ -444,7 +518,9 @@ function updateVibration(s) {
 
 /* ======== GRAVITATIONAL ATTRACTION ======== */
 function applyGravity(dt) {
-  const arr = [...active.values()];
+  _ballScratch.length = 0;
+  active.forEach(v => _ballScratch.push(v));
+  const arr = _ballScratch;
   const n = arr.length;
   if (n < 2) return;
 
@@ -483,7 +559,6 @@ function applyGravity(dt) {
   }
 
   // Apply gravitational effects
-  const appEl = document.getElementById('app');
   const cx = appEl.clientWidth / 2;
   const cy = appEl.clientHeight / 2;
 
@@ -528,14 +603,13 @@ function drawTrailFrame(W, H) {
     const img = s.el.querySelector('img');
     if (!img || !img.complete || !img.naturalWidth) return;
 
-    let rot = 0;
-    try {
-      const m = new DOMMatrix(getComputedStyle(img).transform);
-      rot = Math.atan2(m.b, m.a);
-    } catch(e) {}
+    // Rotation from elapsed time × spin speed (mirrors the CSS disc-spin animation,
+    // avoids a forced getComputedStyle/DOMMatrix read every frame)
+    const frac = ((age / 1000) / s.spinDur) % 1;
+    const rot = s.spinDirSign * frac * Math.PI * 2;
 
     // Apply same breathing scale as the actual circle
-    const breath = 0.65 + s.vibeAmount * 0.85;
+    const breath = TUNING.breathBase + s.vibeAmount * TUNING.breathVol;
     const r = (s.bsz / 2) * breath;
     const cx = s.x + s.bsz / 2;
     const cy = s.y + s.bsz / 2;
@@ -552,6 +626,17 @@ function drawTrailFrame(W, H) {
   });
 }
 
+/* ======== VOLUME + OPACITY + TRANSFORM (shared by every live phase) ======== */
+function applyVolumeAndTransform(s, W, H, maxD, breathScale, entryScale, entryE) {
+  const dist = d2c(s.x + s.bsz/2, s.y + s.bsz/2, W, H);
+  const vol = Math.max(0, 1 - dist / maxD);
+  try { s.audioEl.volume = vol * vol * TUNING.volumeGain; } catch(e) {}
+  s.el.style.opacity = ((TUNING.opacityBase + vol * TUNING.opacityVol) * entryE).toFixed(2);
+  s.el.style.transform =
+    `translate(${s.x}px,${s.y}px) scale(${((TUNING.scaleBase + vol * TUNING.scaleVol) * entryScale * breathScale).toFixed(3)})`;
+  return vol;
+}
+
 /* ======== ANIMATION LOOP ======== */
 function animate(time) {
   requestAnimationFrame(animate);
@@ -561,8 +646,7 @@ function animate(time) {
   const dt = Math.min((time - lastT) / 1000, 0.1);
   lastT = time;
 
-  const app = document.getElementById('app');
-  const W = app.clientWidth, H = app.clientHeight;
+  const W = appEl.clientWidth, H = appEl.clientHeight;
   const cx = W / 2, cy = H / 2;
   const maxD = Math.hypot(cx, cy);
   const now = Date.now();
@@ -580,15 +664,11 @@ function animate(time) {
     updateVibration(s);
     const vibe = s.vibeAmount;
     // Smooth breathing scale: range from 0.70 (quiet) to 1.35 (loud beat)
-    const breathScale = 0.65 + vibe * 0.85;
+    const breathScale = TUNING.breathBase + vibe * TUNING.breathVol;
 
     /* ---- DRAGGING ---- */
     if (s.phase === 'dragging') {
-      const dist = d2c(s.x + s.bsz/2, s.y + s.bsz/2, W, H);
-      const vol = Math.max(0, 1 - dist / maxD);
-      try { s.audioEl.volume = vol * vol * 0.25; } catch(e) {}
-      s.el.style.opacity = (0.35 + vol * 0.65).toFixed(2);
-      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${((0.82 + vol * 0.18) * breathScale).toFixed(3)})`;
+      applyVolumeAndTransform(s, W, H, maxD, breathScale, 1, 1);
       return;
     }
 
@@ -610,11 +690,7 @@ function animate(time) {
       s.x += s.throwVx * dt;
       s.y += s.throwVy * dt;
 
-      const dist = d2c(s.x + s.bsz/2, s.y + s.bsz/2, W, H);
-      const vol = Math.max(0, 1 - dist / maxD);
-      try { s.audioEl.volume = vol * vol * 0.25; } catch(e) {}
-      s.el.style.opacity = (0.35 + vol * 0.65).toFixed(2);
-      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${((0.82 + vol * 0.18) * breathScale).toFixed(3)})`;
+      applyVolumeAndTransform(s, W, H, maxD, breathScale, 1, 1);
 
       if (Math.hypot(s.throwVx, s.throwVy) < 15) {
         const dx = s.x + s.bsz/2 - cx;
@@ -639,13 +715,7 @@ function animate(time) {
       s.x = cx + s.orbitR * Math.cos(s.angle) - s.bsz / 2;
       s.y = cy + s.orbitR * Math.sin(s.angle) - s.bsz / 2;
 
-      const dist = d2c(s.x + s.bsz/2, s.y + s.bsz/2, W, H);
-      const vol = Math.max(0, 1 - dist / maxD);
-      try { s.audioEl.volume = vol * vol * 0.25; } catch(e) {}
-
-      const entryScale = 0.2 + 0.8 * entryE;
-      s.el.style.opacity = ((0.35 + vol * 0.65) * entryE).toFixed(2);
-      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${((0.82 + vol * 0.18) * entryScale * breathScale).toFixed(3)})`;
+      applyVolumeAndTransform(s, W, H, maxD, breathScale, 0.2 + 0.8 * entryE, entryE);
 
       if (!frozen && age > DRIFT_AT) {
         s.phase = 'drift';
@@ -676,12 +746,7 @@ function animate(time) {
       s.x += s.driftVx * dt;
       s.y += s.driftVy * dt;
 
-      const dist = d2c(s.x + s.bsz/2, s.y + s.bsz/2, W, H);
-      const vol = Math.max(0, 1 - dist / maxD);
-      try { s.audioEl.volume = vol * vol * 0.25; } catch(e) {}
-
-      s.el.style.opacity = (0.35 + vol * 0.65).toFixed(2);
-      s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${((0.82 + vol * 0.18) * breathScale).toFixed(3)})`;
+      applyVolumeAndTransform(s, W, H, maxD, breathScale, 1, 1);
 
       const scx = s.x + s.bsz/2, scy = s.y + s.bsz/2;
       if (scx < -s.bsz || scx > W + s.bsz || scy < -s.bsz || scy > H + s.bsz) {
@@ -800,8 +865,7 @@ function onUp() {
   }
 
   // Drop in place (frozen: no inertia; unfrozen: below throw threshold)
-  const app = document.getElementById('app');
-  const cxS = app.clientWidth / 2, cyS = app.clientHeight / 2;
+  const cxS = appEl.clientWidth / 2, cyS = appEl.clientHeight / 2;
   const dx = s.x + s.bsz/2 - cxS;
   const dy = s.y + s.bsz/2 - cyS;
   s.orbitR = Math.max(30, Math.hypot(dx, dy));
@@ -814,7 +878,6 @@ function onUp() {
 /* ======== FREEZE ======== */
 function togFreeze() {
   frozen = !frozen;
-  const appEl = document.getElementById('app');
   const w = document.getElementById('infinity-wrap');
   const l = document.getElementById('freeze-label');
   const ex = document.getElementById('btn-export');
@@ -1058,7 +1121,6 @@ function updShare() {
 }
 
 /* ======== EVENTS ======== */
-const appEl = document.getElementById('app');
 appEl.addEventListener('mousedown', onDown);
 document.addEventListener('mousemove', onMove);
 document.addEventListener('mouseup', onUp);
