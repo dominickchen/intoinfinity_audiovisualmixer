@@ -6,6 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#f5f5f0">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
 <title>INTO INFINITY - AudioVisual Mixer</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
@@ -24,14 +25,19 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 /* Infinity logo center */
 #infinity-wrap{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:10;cursor:pointer;transition:filter .4s,transform .15s;padding:14px}
 #infinity-wrap:active{transform:translate(-50%,-50%) scale(.92)}
-#infinity-logo{width:min(22vw,22vh);height:auto;pointer-events:none;transition:filter .4s}
+/* Intro: sit above the start overlay as the title, and let taps pass through to it */
+#infinity-wrap.intro{z-index:101;pointer-events:none}
+/* Scaler shrinks from title size to centre size on start */
+#infinity-scaler{transition:transform 1.1s ease-in-out}
+#infinity-scaler.intro{transform:scale(2.7)}
+#infinity-logo{width:min(22vw,22vh);height:auto;pointer-events:none;transition:filter .4s;will-change:transform}
 #infinity-wrap.frozen{filter:drop-shadow(0 0 16px rgba(70,130,255,.5)) drop-shadow(0 0 36px rgba(70,130,255,.25))}
 #infinity-wrap.frozen #infinity-logo{filter:brightness(1.2) saturate(1.4)}
 
 /* Start overlay */
-#start-overlay{position:absolute;inset:0;background:rgba(245,245,240,.94);z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity .8s ease;cursor:pointer}
+#start-overlay{position:absolute;inset:0;background:rgba(245,245,240,.94);z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:14vh;transition:opacity .8s ease;cursor:pointer}
 #start-overlay.hidden{opacity:0;pointer-events:none}
-.start-logo{margin-bottom:20px;width:min(40vw,180px);height:auto}
+.start-text{display:flex;flex-direction:column;align-items:center}
 #start-overlay h1{font-size:1.5rem;font-weight:200;letter-spacing:.2em;color:#3a3832;margin-bottom:6px}
 #start-overlay .sub{font-size:.68rem;font-weight:300;letter-spacing:.1em;color:#aaa;margin-bottom:28px}
 #start-overlay .tap{font-size:.76rem;color:#999;letter-spacing:.06em;animation:pulse 2.5s ease-in-out infinite}
@@ -85,17 +91,17 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 #share-modal .mix-info{font-size:.7rem;background:#f8f8f5;border-radius:8px;padding:12px;margin:10px 0;color:#555;line-height:1.6;white-space:pre-wrap}
 
 /* Sound circles */
-.sound-circle{position:absolute;border-radius:50%;cursor:grab;will-change:transform,opacity;z-index:3}
+.sound-circle{position:absolute;border-radius:50%;cursor:grab;will-change:transform,opacity;z-index:3;background:#c2c2c2}
 .sound-circle:active{cursor:grabbing}
-.sound-circle img{width:100%;height:100%;border-radius:50%;object-fit:cover;pointer-events:none;animation:disc-spin var(--spin-dur,8s) linear infinite var(--spin-dir,normal)}
+.sound-circle img{width:100%;height:100%;border-radius:50%;object-fit:cover;pointer-events:none;opacity:0;transition:opacity .6s ease;animation:disc-spin var(--spin-dur,8s) linear infinite var(--spin-dir,normal)}
+.sound-circle.revealed img{opacity:1}
 @keyframes disc-spin{to{transform:rotate(360deg)}}
-.sound-circle .artist-label{position:absolute;bottom:-15px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:.46rem;color:rgba(0,0,0,.22);letter-spacing:.04em;pointer-events:none;font-weight:300}
 
 /* Detail modal — counter-invert when frozen so image/text show true colours */
 #detail-modal{background:rgba(0,0,0,.35)}
 #app.frozen #detail-modal{filter:invert(1)}
 #detail-modal .detail-content{display:flex;flex-direction:column;align-items:center;cursor:pointer;padding:20px}
-#detail-modal .detail-img{width:min(52vw,52vh);height:min(52vw,52vh);border-radius:50%;object-fit:cover;box-shadow:0 8px 40px rgba(0,0,0,.2);margin-bottom:20px;animation:disc-spin 8s linear infinite}
+#detail-modal .detail-img{width:min(52vw,52vh);height:min(52vw,52vh);border-radius:50%;object-fit:cover;box-shadow:0 8px 40px rgba(0,0,0,.2);margin-bottom:20px;animation:disc-spin 14.4s linear infinite}
 #detail-modal .detail-info{text-align:center;color:rgba(255,255,255,.88)}
 #detail-modal .detail-info p{font-size:.78rem;line-height:1.9;letter-spacing:.04em;font-weight:300}
 #detail-modal .detail-info .label{font-size:.55rem;color:rgba(255,255,255,.45);letter-spacing:.1em;text-transform:uppercase;margin-bottom:2px}
@@ -108,17 +114,18 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
   <div id="bg-ring"></div>
   <canvas id="trail-canvas"></canvas>
 
-  <!-- Start overlay -->
+  <!-- Start overlay (the big centred logo below acts as the title) -->
   <div id="start-overlay">
-    <img class="start-logo" src="INTO_INFINITY_LOGO.png" alt="INTO INFINITY" draggable="false">
-    <h1>INTO INFINITY</h1>
-    <div class="sub">AudioVisual Mixer</div>
-    <div class="tap">Tap anywhere to begin</div>
+    <div class="start-text">
+      <h1>INTO INFINITY</h1>
+      <div class="sub">AudioVisual Mixer</div>
+      <div class="tap">Tap anywhere to begin</div>
+    </div>
   </div>
 
-  <!-- Center infinity -->
-  <div id="infinity-wrap">
-    <img id="infinity-logo" src="INTO_INFINITY_LOGO.png" alt="INTO INFINITY" draggable="false">
+  <!-- Center infinity — starts large (title), shrinks to centre + spins on start -->
+  <div id="infinity-wrap" class="intro">
+    <div id="infinity-scaler" class="intro"><img id="infinity-logo" src="INTO_INFINITY_LOGO.svg" alt="INTO INFINITY" draggable="false"></div>
   </div>
   <div id="freeze-label">FROZEN</div>
 
@@ -184,8 +191,21 @@ if ('serviceWorker' in navigator) {
 /* ======== CONSTANTS ======== */
 let   TOTAL = 157;          // pair count — re-derived from PAIRS.length after load
 const MAX   = 4;            // max simultaneous sounds
-const DRIFT_AT  = 25000;    // ms before drift phase begins
-const ENTRY_DUR = 600;      // ms for entry animation
+const DRIFT_AT  = 48000;    // ms before drift phase begins (original used ~64s; 48s here)
+const DRIFT_RAMP_S = 2.5;   // seconds for the outward spiral speed to ease in (force drains gradually)
+const LOAD_MIN_MS  = 3000;  // min time the grey loading circle shows (even when cached)
+const REVEAL_DUR   = 700;   // ms to expand + fade from grey circle to the image
+const GRAY_FADE_MS = 250;   // ms for the grey loading circle to fade in on birth
+const LOGO_INTRO_MS = 1150; // ms for the title logo to shrink to centre before the first spawn (matches CSS 1.1s)
+const SPAWN_INTERVAL_MS   = 7000;  // min gap between object spawns (was 4500)
+const SPAWN_INTERVAL_RAND = 5000;  // + random up to this (→ 7–12s spacing)
+const LOGO_SPIN_DEGPS = 22.5; // steady centre-logo rotation speed (deg/s ≈ 16s per turn)
+const LOGO_RAMP_S = 0.5;      // seconds to ease the logo rotation from 0 up to full speed
+// Trail blur (original MainLayer.m: blurAmount = BLUR_BASE + BLUR_AMP*cos(t/PERIOD*2π), faded /255 per frame @25fps)
+const BLUR_BASE = 24, BLUR_AMP = 18, BLUR_PERIOD_S = 120; // breathes 6..42 over 120s
+const TRAIL_MIN_FADE = 0.05;  // floor on per-frame fade so faint trails clear (avoids stuck 8-bit residue)
+const TRAIL_LOGO_ALPHA = 0.6; // how strongly the centre logo burns into the trail
+let blurTime = 0;
 const ASSET_DIR = 'EYE_EAR/';
 const BG_R = 245, BG_G = 245, BG_B = 240; // background colour for trail fade
 
@@ -199,8 +219,12 @@ const BG_R = 245, BG_G = 245, BG_B = 240; // background colour for trail fade
  * so ratios below are seeded as (origPx / 320) where relevant.
  */
 const TUNING = {
-  /* --- object size (px, clamped) — screen-independent via S --- */
-  objDiameterRatio: 0.17,   // disc diameter = clamp(min, ratio*S, max)
+  /* --- layout scale --- */
+  aspectSpread:     0.6,    // orbit/physics scale leans from min(W,H) toward max(W,H): 0=square-fit, 1=full.
+                            //   >0 lets orbits spill past the short edge on tall/wide screens (less cramped)
+
+  /* --- object size (px, clamped) — uses min(W,H) so discs stay sensible --- */
+  objDiameterRatio: 0.17,   // disc diameter = clamp(min, ratio*minWH, max)
   objDiameterMin:   105,
   objDiameterMax:   150,
 
@@ -211,31 +235,41 @@ const TUNING = {
 
   /* --- audio→visual response (unitless) --- */
   volumeGain:  0.25,        // audioEl.volume = vol*vol*volumeGain
-  scaleBase:   0.82,        // circle scale   = scaleBase   + vol*scaleVol
-  scaleVol:    0.18,
+  // Size follows the ORIGINAL iOS model (Ball.m:356): radius = staticRadius*(1 + vu),
+  // where vu = audio power × volume. (No spring — Spring.m is dead code in the original.)
+  sizeRest:      0.70,      // rest size (staticRadius equivalent) when there's no audio energy
+  sizeAudioGain: 1.0,       // how strongly vu (audio×volume) expands the size outward
+  vibeGain:      3.0,       // amplifies the measured audio loudness (RMS) into the 0..1 reactivity
   opacityBase: 0.35,        // circle opacity = opacityBase + vol*opacityVol
   opacityVol:  0.65,
-  breathBase:  0.65,        // breathing scale = breathBase + vibe*breathVol
-  breathVol:   0.85,
+  loadScale:   0.08,        // scale of the grey loading circle before reveal
+  loadOpacity: 0.55,        // opacity of the grey loading circle
 
-  /* --- physics (Phase 1 will wire these into the new attraction model) --- */
-  posLerp:         0.10,    // position ease toward target
-  damping:         0.99,    // drift acceleration decay / frame
-  captureRate:     0.02,    // ease toward target orbit radius
-  tangentialSpeed: 1.2,     // deg/frame orbital spin at full attraction
-  centerOrbitRatio: 2.8,    // center's target orbit radius = radius*2.8
-  objOrbitRatio:    3.0,    // an object's target orbit radius = radius*3
-  centerAreaRatio: 140/320, // center's gravity reach (ratio of S)
-  objAreaRatio:     90/320, // an object's gravity reach (ratio of S)
-  gravityPull:      1.0,    // global attraction multiplier
+  /* --- physics (dest-integration attraction model; rates are per SECOND, dt-based) --- */
+  posLerp:          0.07,   // position ease toward target — lower = floatier lag (0.1/frame @25fps ref)
+  damping:          0.25,   // fraction of drift acceleration retained per second
+  captureRate:      0.6,    // rate/s easing an object toward its target orbit ring
+  tangentialSpeed:  14,     // deg/second orbital spin (satellite rotation) — lower = slower, floatier
+  centerOrbitRatio: 0.30,   // target ring radius around the center ∞ (ratio of S)
+  objOrbitRatio:    0.17,   // target ring radius around another object (ratio of S)
+  centerAreaRatio:  0.45,   // center attraction reach beyond its ring (ratio of S)
+  objAreaRatio:     0.40,   // object attraction reach beyond its ring (ratio of S)
+  gravityPull:      1.0,    // centre attraction multiplier
+  objGravityPull:   1.9,    // object→object attraction multiplier (newborns capture satellites)
+  vitalityCurve:    2.0,    // exponent on youth: >1 makes just-born objects dominate the pull
+  accInit:          0.10,   // initial drift-acceleration magnitude (ratio of S → px/s)
+  releaseRamp:      1.0,    // seconds for releaseVelocity 0→1 after a throw/drop (suppresses then restores attraction)
+  driftSpeed:       0.10,   // outward speed when an aged object enters the drift phase (ratio of S → px/s)
 
   /* --- collision avoidance (improvement over original; wired in Phase 1) ---
    * Objects softly push apart before touching, and near the center overlap is
    * fully prevented. Enforcement scales with closeness to center (continuous). */
   separationGap:       1.12,   // desired min center gap = (r1+r2) * gap (~12% space)
-  separationStrength:  0.6,    // soft repulsion gain (visible dodging)
+  separationStrength:  0.35,   // soft repulsion gain (lower = gentler, smoother dodging)
+  separationTangent:   0.7,    // sideways slide component — objects curve AROUND each other (rounder avoidance)
   separationZoneRatio: 0.40,   // center-distance (ratio of S) where enforcement is full; fades to 0 beyond
-  separationHardCorrect: true, // also hard-correct residual overlap inside the zone
+  separationHardCorrect: true, // hard-correct residual overlap inside the zone…
+  separationHardRate:  0.35,   // …but only this fraction per frame, so it eases apart instead of snapping
 
   /* --- audio spatialization / reactivity (Phase 3/4/5) --- */
   panRange:      1.0,       // stereo pan strength (Phase 3)
@@ -252,13 +286,15 @@ const TUNING = {
 /* clamp helper */
 function clamp(min, v, max) { return v < min ? min : v > max ? max : v; }
 
+// Layout scale S for orbits/physics: leans from the short edge toward the long edge so the
+// composition isn't cramped inside a tall/wide screen (orbits can spill past the short edge).
+function layoutScale(W, H) {
+  const lo = Math.min(W, H), hi = Math.max(W, H);
+  return lo + (hi - lo) * TUNING.aspectSpread;
+}
+
 // Expose for live tuning from the devtools console, e.g. TUNING.objDiameterRatio = 0.22
 window.TUNING = TUNING;
-
-/* ======== GRAVITY CONSTANTS ======== */
-const GRAVITY_G = 4500;       // gravitational constant
-const GRAVITY_MIN_DIST = 60;  // minimum distance clamp
-const GRAVITY_DAMPING = 0.97; // damping factor per frame
 
 /* ======== PAIRING DATA (loaded from paring.json) ======== */
 let PAIRS = []; // will be populated on load
@@ -313,6 +349,8 @@ let exporting = false;
 
 /* ======== CACHED DOM ======== */
 const appEl = document.getElementById('app');
+const infinityLogo = document.getElementById('infinity-logo');
+let logoSpinning = false, logoSpinStart = 0, logoAngle = 0;  // centre-logo rotation (JS-driven, eased)
 
 /* ======== TRAIL CANVAS ======== */
 const trailCanvas = document.getElementById('trail-canvas');
@@ -333,33 +371,45 @@ function createAudioEl(earFile) {
   a.src = ASSET_DIR + earFile;
   a.loop = true;
   a.volume = 0;
-  a.preload = 'auto';
+  a.preload = 'auto';        // buffers during the grey "preparing" phase; playback starts on reveal
   a.crossOrigin = 'anonymous';
   return a;
 }
 
+// Returns { analyser, gain }. The analyser taps the FULL-amplitude signal (so size reacts to
+// the real audio, not the attenuated playback volume); audible volume is set via the gain node.
 function createAnalyser(audioEl) {
   try {
     const ctx = getAudioCtx();
     const source = ctx.createMediaElementSource(audioEl);
+    audioEl.volume = 1;              // full signal into the graph — analyser sees the real audio
     const analyser = ctx.createAnalyser();
     analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.85;
-    source.connect(analyser);
-    analyser.connect(ctx.destination);
-    return analyser;
+    analyser.smoothingTimeConstant = 0.75;
+    analyser.minDecibels = -70;
+    analyser.maxDecibels = -30;
+    const gain = ctx.createGain();
+    gain.gain.value = 0;             // audible volume, set per frame from distance
+    source.connect(analyser);        // full-amplitude tap for reactivity
+    source.connect(gain);
+    gain.connect(ctx.destination);   // gain controls what you actually hear
+    return { analyser, gain };
   } catch(e) {
     console.warn('Could not create analyser:', e);
     return null;
   }
 }
 
+// Audible-volume helpers (gain node when the graph exists, else the element's own volume)
+function setAudibleVol(s, v) { if (s.gain) s.gain.gain.value = v; else { try { s.audioEl.volume = v; } catch(e) {} } }
+function getAudibleVol(s) { return s.gain ? s.gain.gain.value : s.audioEl.volume; }
+
 /* ======== HELPERS ======== */
 function d2c(x, y, W, H) { return Math.hypot(x - W/2, y - H/2); }
 function easeOut3(t) { return 1 - Math.pow(1 - t, 3); }
 
 function getOrbitR() {
-  const S = Math.min(appEl.clientWidth, appEl.clientHeight);
+  const S = layoutScale(appEl.clientWidth, appEl.clientHeight);
   return S * TUNING.orbitRadiusRatio * (TUNING.orbitJitterBase + Math.random() * TUNING.orbitJitterRange);
 }
 
@@ -413,20 +463,17 @@ async function spawn(pairIdOverride) {
   const uid = uid_++;
   const W = appEl.clientWidth, H = appEl.clientHeight;
 
-  // Orbit parameters — base speed reduced (gravity further slows)
+  // Spawn placement: a random point on a ring around the center
   const orbitR = getOrbitR();
   const angle = Math.random() * Math.PI * 2;
-  const dir = Math.random() < 0.5 ? 1 : -1;
-  const angSpeed = dir * (0.25 + Math.random() * 0.3) * 0.6;
 
   const cx = W / 2, cy = H / 2;
   const initX = cx + orbitR * Math.cos(angle);
   const initY = cy + orbitR * Math.sin(angle);
 
-  // Disc diameter scales with the reference scale S = min(W,H) so the
-  // composition stays similar on any screen, clamped to keep it sensible.
-  const S = Math.min(W, H);
-  const bsz = clamp(TUNING.objDiameterMin, TUNING.objDiameterRatio * S, TUNING.objDiameterMax);
+  // Disc diameter uses min(W,H) so discs stay sensible; drift uses the layout scale.
+  const bsz = clamp(TUNING.objDiameterMin, TUNING.objDiameterRatio * Math.min(W, H), TUNING.objDiameterMax);
+  const S = layoutScale(W, H);   // for drift-acceleration magnitude below
 
   // Create DOM element
   const el = document.createElement('div');
@@ -441,181 +488,236 @@ async function spawn(pairIdOverride) {
   const img = document.createElement('img');
   img.src = ASSET_DIR + pair.eye;
   img.draggable = false;
-  const spinDur = parseFloat((4 + Math.random() * 8).toFixed(1)); // seconds per rotation
-  const spinDir = Math.random() < 0.5 ? 'normal' : 'reverse';
+  const spinDur = 14.4;      // iOS: self.rotation -= 1 @25fps = 25°/s = 14.4s/turn, uniform for all discs
+  const spinDir = 'normal';  // one direction for all (matches the original)
   img.style.setProperty('--spin-dur', spinDur + 's');
   img.style.setProperty('--spin-dir', spinDir);
   el.appendChild(img);
 
-  const lbl = document.createElement('div');
-  lbl.className = 'artist-label';
-  lbl.textContent = '#' + pairId;
-  el.appendChild(lbl);
-
   appEl.appendChild(el);
   el.dataset.uid = uid;
 
-  // Create audio
+  // Create audio element — during the grey phase it only PREPARES (buffers); it is not played.
   const audioEl = createAudioEl(pair.ear);
-  try {
-    await audioEl.play();
-  } catch(e) {
-    console.warn('Failed to play audio', pair.ear, e);
-    activePairs.delete(pairId);
-    if (el.parentNode) el.parentNode.removeChild(el);
-    return;
-  }
 
-  // Create Web Audio analyser for vibration
-  const analyser = createAnalyser(audioEl);
+  // Create Web Audio analyser (full-signal tap) + gain node (audible volume)
+  const audioNodes = createAnalyser(audioEl);
+  const analyser = audioNodes ? audioNodes.analyser : null;
+  const gain = audioNodes ? audioNodes.gain : null;
   const analyserData = analyser ? new Uint8Array(analyser.frequencyBinCount) : null;
 
   const obj = {
     el, audioEl, pairId, pair,
     born: Date.now(), bsz, uid,
     x: initX - bsz/2, y: initY - bsz/2,
-    angle, orbitR, angSpeed,
     phase: 'orbit',           // orbit | drift | dragging | thrown
-    driftVx: 0, driftVy: 0,
+    // Attraction model (Phase 1): target center-position + drift accel + throw recapture ramp
+    destX: initX, destY: initY,
+    accX: Math.cos(angle) * TUNING.accInit * S,
+    accY: Math.sin(angle) * TUNING.accInit * S,
+    releaseVelocity: 1,
+    loadAngle: angle, loadRadius: orbitR,      // simple independent orbit while the grey circle loads
+    smVol: 0, gain,                            // smoothed volume + gain node (audible level)
+    driftAngle: 0, driftRadius: 0, driftT: 0,  // spiral-out state (set when entering the drift phase)
     throwVx: 0, throwVy: 0,
     // Disc spin (mirrors the CSS disc-spin animation, used for trail rotation)
     spinDur, spinDirSign: spinDir === 'reverse' ? -1 : 1,
+    // Loading → reveal state (grey circle until the image is ready + LOAD_MIN_MS)
+    revealStart: 0, imgReady: false,
     // Audio analyser for vibration
     analyser, analyserData,
     vibeAmount: 0  // current vibration amplitude 0-1
   };
   active.set(uid, obj);
   updCount();
+
+  // Mark the image ready now (cached) or when it finishes loading
+  if (img.complete && img.naturalWidth) obj.imgReady = true;
+  else img.addEventListener('load', () => { obj.imgReady = true; });
 }
 
 /* ======== AUDIO-REACTIVE BREATHING PULSE ======== */
 function updateVibration(s) {
   if (!s.analyser || !s.analyserData) { s.vibeAmount = 0; return; }
   try {
-    s.analyser.getByteFrequencyData(s.analyserData);
-    // Weight low-mid frequencies more heavily (bass/beat)
-    const data = s.analyserData;
-    const len = data.length;
-    let sum = 0, weight = 0;
-    for (let i = 0; i < len; i++) {
-      // Bass bins (0-len/4) get 3x weight, mids get 1.5x, highs get 0.5x
-      const w = i < len / 4 ? 3.0 : i < len / 2 ? 1.5 : 0.5;
-      sum += data[i] * w;
-      weight += 255 * w;
-    }
-    const raw = sum / weight; // 0-1 normalized, bass-weighted
-    // Smooth with lerp toward target (slow attack, medium release)
-    const target = raw;
-    if (target > s.vibeAmount) {
-      s.vibeAmount += (target - s.vibeAmount) * 0.18; // attack
-    } else {
-      s.vibeAmount += (target - s.vibeAmount) * 0.08; // release (slower)
-    }
+    // Time-domain RMS = direct loudness of the (full-amplitude) signal, independent of dB windowing
+    s.analyser.getByteTimeDomainData(s.analyserData);
+    const data = s.analyserData, len = data.length;
+    let sumSq = 0;
+    for (let i = 0; i < len; i++) { const v = (data[i] - 128) / 128; sumSq += v * v; }
+    const rms = Math.sqrt(sumSq / len);                    // 0 .. ~0.7
+    const target = Math.min(1, rms * TUNING.vibeGain);
+    // Smooth (snappy attack, slower release) — this is where the "momentum" smoothing lives
+    if (target > s.vibeAmount) s.vibeAmount += (target - s.vibeAmount) * 0.30;
+    else s.vibeAmount += (target - s.vibeAmount) * 0.12;
   } catch(e) {
     s.vibeAmount = 0;
   }
 }
 
-/* ======== GRAVITATIONAL ATTRACTION ======== */
-function applyGravity(dt) {
-  _ballScratch.length = 0;
-  active.forEach(v => _ballScratch.push(v));
-  const arr = _ballScratch;
-  const n = arr.length;
-  if (n < 2) return;
+/* ======== ATTRACTION MODEL (potential-well + tangential satellite motion) ========
+ * Ports the original BallSprite tick(): each live object is drawn toward a
+ * target orbit RING around every attractor (the center ∞ and other objects),
+ * then swept tangentially so it circles instead of colliding. Attraction from a
+ * neighbour fades as that neighbour ages (vitality → newborns pull strongest).
+ * All rates are per-second (dt-based) so behaviour is frame-rate independent.
+ */
+const _att = { x: 0, y: 0, invPow: 1 }; // reused to avoid per-call allocation
 
-  for (let i = 0; i < n; i++) {
-    arr[i]._gax = 0;
-    arr[i]._gay = 0;
-  }
+// Pull point (px,py) toward one attractor's ring; writes result into _att.
+function attractToward(px, py, ax, ay, ringR, areaR, vit, releaseVel, dt, pull) {
+  let dx = px - ax, dy = py - ay;
+  const d = Math.hypot(dx, dy);
+  if (d < 0.0001) { _att.x = px; _att.y = py; _att.invPow = 1; return; }
+  const a = 1 - clamp(0, (d - ringR) / areaR, 1);   // proximity 0..1
+  if (a <= 0) { _att.x = px; _att.y = py; _att.invPow = 1; return; }
+  let pow = clamp(0, releaseVel * vit * a * pull, 1);
+  // ease distance toward the ring radius
+  const d2 = d + (ringR - d) * pow * TUNING.captureRate * dt;
+  const sc = d2 / d;
+  dx *= sc; dy *= sc;
+  // rotate tangentially around the attractor (satellite sweep)
+  const ang = (TUNING.tangentialSpeed * Math.PI / 180) * pow * dt;
+  const c = Math.cos(ang), s = Math.sin(ang);
+  _att.x = ax + (c * dx - s * dy);
+  _att.y = ay + (s * dx + c * dy);
+  _att.invPow = 1 - pow;
+}
 
-  // Compute pairwise gravitational forces
-  for (let i = 0; i < n; i++) {
-    const a = arr[i];
-    if (a.phase === 'dragging') continue;
-    const ax = a.x + a.bsz / 2;
-    const ay = a.y + a.bsz / 2;
+// Advance one orbiting object: attraction chain + drift + soft separation + integrate.
+// The tangential rotation accumulates on the persistent target (destX/destY) so the
+// orbit runs at the full angular rate; the rendered position then eases toward it.
+function stepOrbit(s, dt, W, H, cx, cy, S, now) {
+  if (s.releaseVelocity < 1) s.releaseVelocity = Math.min(1, s.releaseVelocity + dt / TUNING.releaseRamp);
 
-    for (let j = i + 1; j < n; j++) {
-      const b = arr[j];
-      if (b.phase === 'dragging') continue;
-      const bx = b.x + b.bsz / 2;
-      const by = b.y + b.bsz / 2;
+  let px = s.destX, py = s.destY;
+  let accReduction = 1;
 
-      let dx = bx - ax;
-      let dy = by - ay;
-      let dist = Math.hypot(dx, dy);
-      if (dist < GRAVITY_MIN_DIST) dist = GRAVITY_MIN_DIST;
+  // 1) attraction toward the center ∞ (always full vitality)
+  attractToward(px, py, cx, cy, TUNING.centerOrbitRatio * S, TUNING.centerAreaRatio * S, 1, s.releaseVelocity, dt, TUNING.gravityPull);
+  px = _att.x; py = _att.y; accReduction *= _att.invPow;
 
-      const force = GRAVITY_G / (dist * dist);
-      const fx = force * (dx / dist);
-      const fy = force * (dy / dist);
+  // 2) attraction toward every other orbiting object — newborns pull hardest (vitality),
+  //    with a stronger object pull so a fresh object captures nearby ones as satellites
+  active.forEach(o => {
+    if (o === s || o.phase !== 'orbit' || !o.revealStart) return;
+    let vit = 1 - Math.min(1, ((now - o.born) / 1000) / TUNING.lifeSoft);
+    vit = Math.pow(vit, TUNING.vitalityCurve);   // steeper so youth dominates
+    attractToward(px, py, o.x + o.bsz / 2, o.y + o.bsz / 2,
+      TUNING.objOrbitRatio * S, TUNING.objAreaRatio * S, vit, s.releaseVelocity, dt, TUNING.objGravityPull);
+    px = _att.x; py = _att.y; accReduction *= _att.invPow;
+  });
 
-      a._gax += fx;
-      a._gay += fy;
-      b._gax -= fx;
-      b._gay -= fy;
+  // 3) drift acceleration — free wander / recapture coast, damped, suppressed when captured
+  s.accX *= Math.pow(TUNING.damping, dt);
+  s.accY *= Math.pow(TUNING.damping, dt);
+  px += s.accX * accReduction * dt;
+  py += s.accY * accReduction * dt;
+
+  // 4) soft separation — strongly avoid overlap, gated by closeness to center
+  //    (dragged / still-loading objects are ignored so they don't push others around)
+  active.forEach(o => {
+    if (o === s || o.phase === 'thrown' || o.phase === 'dragging' || !o.revealStart) return;
+    const dx = px - (o.x + o.bsz / 2), dy = py - (o.y + o.bsz / 2);
+    const d = Math.hypot(dx, dy);
+    const minD = (s.bsz / 2 + o.bsz / 2) * TUNING.separationGap;
+    if (d < minD && d > 0.0001) {
+      const centerDist = Math.hypot(px - cx, py - cy);
+      const gate = 1 - clamp(0, centerDist / (TUNING.separationZoneRatio * S), 1);
+      if (gate > 0) {
+        const push = (minD - d) * TUNING.separationStrength * gate;
+        const ux = dx / d, uy = dy / d;                 // radial (away from o)
+        const tan = TUNING.separationTangent;
+        // radial push + tangential slide → the two circles curve around each other
+        px += (ux - uy * tan) * push;
+        py += (uy + ux * tan) * push;
+      }
     }
-  }
+  });
 
-  // Apply gravitational effects
-  const cx = appEl.clientWidth / 2;
-  const cy = appEl.clientHeight / 2;
+  s.destX = px; s.destY = py;
 
+  // 5) integrate rendered position toward the target (frame-rate independent)
+  const k = 1 - Math.pow(1 - TUNING.posLerp, dt * 25);
+  const ncx = (s.x + s.bsz / 2) + (s.destX - (s.x + s.bsz / 2)) * k;
+  const ncy = (s.y + s.bsz / 2) + (s.destY - (s.y + s.bsz / 2)) * k;
+  s.x = ncx - s.bsz / 2;
+  s.y = ncy - s.bsz / 2;
+}
+
+// Hard non-overlap correction near the center (backstop after positions settle).
+function separateHard(cx, cy, S) {
+  if (!TUNING.separationHardCorrect) return;
+  _ballScratch.length = 0;
+  active.forEach(v => { if (v.phase === 'orbit' && v.revealStart) _ballScratch.push(v); });   // dragged / loading excluded
+  const arr = _ballScratch, n = arr.length;
   for (let i = 0; i < n; i++) {
-    const s = arr[i];
-    if (s.phase === 'orbit') {
-      const sx = s.x + s.bsz / 2;
-      const sy = s.y + s.bsz / 2;
-      const toCenter_dx = cx - sx;
-      const toCenter_dy = cy - sy;
-      const rDist = Math.hypot(toCenter_dx, toCenter_dy) || 1;
-      const radialDir_x = toCenter_dx / rDist;
-      const radialDir_y = toCenter_dy / rDist;
-
-      const radialForce = s._gax * radialDir_x + s._gay * radialDir_y;
-      const tangForce = s._gax * (-radialDir_y) + s._gay * radialDir_x;
-
-      s.orbitR = Math.max(25, s.orbitR - radialForce * dt * 0.5);
-      s.angSpeed += tangForce * dt * 0.0003;
-      s.angSpeed *= Math.pow(GRAVITY_DAMPING, dt);
-      const maxAng = 0.35;
-      if (Math.abs(s.angSpeed) > maxAng) s.angSpeed = maxAng * Math.sign(s.angSpeed);
-    } else if (s.phase === 'thrown') {
-      s.throwVx += s._gax * dt;
-      s.throwVy += s._gay * dt;
-    } else if (s.phase === 'drift') {
-      s.driftVx += s._gax * dt;
-      s.driftVy += s._gay * dt;
+    for (let j = i + 1; j < n; j++) {
+      const a = arr[i], b = arr[j];
+      const ax = a.x + a.bsz / 2, ay = a.y + a.bsz / 2;
+      const bx = b.x + b.bsz / 2, by = b.y + b.bsz / 2;
+      const dx = ax - bx, dy = ay - by;
+      const d = Math.hypot(dx, dy);
+      const minD = a.bsz / 2 + b.bsz / 2;   // exact touch = zero overlap
+      if (d < minD && d > 0.0001) {
+        const mx = (ax + bx) / 2, my = (ay + by) / 2;
+        const gate = 1 - clamp(0, Math.hypot(mx - cx, my - cy) / (TUNING.separationZoneRatio * S), 1);
+        if (gate > 0) {
+          // ease apart over a few frames (rate) with a tangential slide, so it curves rather than snaps
+          const corr = ((minD - d) / 2) * gate * TUNING.separationHardRate;
+          const ux = dx / d, uy = dy / d, tan = TUNING.separationTangent;
+          const vx = ux - uy * tan, vy = uy + ux * tan;
+          if (a.phase !== 'dragging') { a.x += vx * corr; a.y += vy * corr; }
+          if (b.phase !== 'dragging') { b.x -= vx * corr; b.y -= vy * corr; }
+        }
+      }
     }
   }
 }
 
-/* ======== TRAIL DRAWING ======== */
-function drawTrailFrame(W, H) {
-  trailCtx.fillStyle = `rgba(${BG_R},${BG_G},${BG_B},0.1)`;
+/* ======== TRAIL DRAWING ========
+ * Frame-feedback motion blur like the original (MainLayer.m drawEffect): each frame the
+ * accumulated canvas is faded toward the background by blurAmount/255, then the current
+ * discs are burned in at full opacity. blurAmount breathes 6..42 over 120s, and the fade
+ * is dt-scaled so trail length matches the 25fps original at any frame rate.
+ */
+function drawTrailFrame(W, H, dt) {
+  blurTime += dt;
+  const blurAmount = BLUR_BASE + BLUR_AMP * Math.cos(blurTime / BLUR_PERIOD_S * Math.PI * 2);
+  const fadeAlpha = Math.max(TRAIL_MIN_FADE, 1 - Math.pow(1 - blurAmount / 255, 25 * dt));  // fps-independent, floored so faint residue clears
+  trailCtx.fillStyle = `rgba(${BG_R},${BG_G},${BG_B},${fadeAlpha})`;
   trailCtx.fillRect(0, 0, W, H);
 
+  const now = Date.now();
   active.forEach(s => {
     if (s.phase === 'dragging') return;
-    const age = Date.now() - s.born;
-    if (age < ENTRY_DUR) return;
+    const r = (s.bsz / 2) * (s._scale || 0);   // current rendered size (set in applyVolumeAndTransform)
+    if (r < 1) return;
+    const cx = s.x + s.bsz / 2;
+    const cy = s.y + s.bsz / 2;
+    const op = s._opacity || 0;                 // burn in at the disc's true opacity (like the original sprites)
+
+    // Grey loading circle: still contributes to the screen-wide blur/trail (as a grey disc)
+    if (!s.revealStart) {
+      trailCtx.save();
+      trailCtx.globalAlpha = op;
+      trailCtx.fillStyle = '#c2c2c2';
+      trailCtx.beginPath();
+      trailCtx.arc(cx, cy, r, 0, Math.PI * 2);
+      trailCtx.fill();
+      trailCtx.restore();
+      return;
+    }
+
     const img = s.el.querySelector('img');
     if (!img || !img.complete || !img.naturalWidth) return;
 
-    // Rotation from elapsed time × spin speed (mirrors the CSS disc-spin animation,
-    // avoids a forced getComputedStyle/DOMMatrix read every frame)
-    const frac = ((age / 1000) / s.spinDur) % 1;
+    // Rotation from elapsed time × spin speed (mirrors the CSS disc-spin animation)
+    const frac = ((now - s.born) / 1000 / s.spinDur) % 1;
     const rot = s.spinDirSign * frac * Math.PI * 2;
 
-    // Apply same breathing scale as the actual circle
-    const breath = TUNING.breathBase + s.vibeAmount * TUNING.breathVol;
-    const r = (s.bsz / 2) * breath;
-    const cx = s.x + s.bsz / 2;
-    const cy = s.y + s.bsz / 2;
-
     trailCtx.save();
-    trailCtx.globalAlpha = 0.16;
+    trailCtx.globalAlpha = op;
     trailCtx.translate(cx, cy);
     trailCtx.rotate(rot);
     trailCtx.beginPath();
@@ -624,16 +726,48 @@ function drawTrailFrame(W, H) {
     trailCtx.drawImage(img, -r, -r, r * 2, r * 2);
     trailCtx.restore();
   });
+
+  // Centre ∞ logo also feeds the trail/blur (rotating smear)
+  if (logoSpinning && infinityLogo.complete && infinityLogo.naturalWidth) {
+    const lw = infinityLogo.offsetWidth, lh = infinityLogo.offsetHeight;
+    if (lw && lh) {
+      trailCtx.save();
+      trailCtx.globalAlpha = TRAIL_LOGO_ALPHA;
+      trailCtx.translate(W / 2, H / 2);
+      trailCtx.rotate(logoAngle * Math.PI / 180);
+      trailCtx.drawImage(infinityLogo, -lw / 2, -lh / 2, lw, lh);
+      trailCtx.restore();
+    }
+  }
 }
 
-/* ======== VOLUME + OPACITY + TRANSFORM (shared by every live phase) ======== */
-function applyVolumeAndTransform(s, W, H, maxD, breathScale, entryScale, entryE) {
+/* ======== VOLUME + OPACITY + TRANSFORM (shared by every live phase) ========
+ * Faithful to the original Ball.m: volume is one-pole smoothed (momentum), and size is
+ * radius = staticRadius*(1 + vu) with vu = audio power × volume — so it reacts to the sound
+ * and grows near the centre (louder). revealE: 0 while the grey circle loads → 1 when shown.
+ */
+function applyVolumeAndTransform(s, W, H, maxD, vibe, revealE, now, dt) {
   const dist = d2c(s.x + s.bsz/2, s.y + s.bsz/2, W, H);
-  const vol = Math.max(0, 1 - dist / maxD);
-  try { s.audioEl.volume = vol * vol * TUNING.volumeGain; } catch(e) {}
-  s.el.style.opacity = ((TUNING.opacityBase + vol * TUNING.opacityVol) * entryE).toFixed(2);
-  s.el.style.transform =
-    `translate(${s.x}px,${s.y}px) scale(${((TUNING.scaleBase + vol * TUNING.scaleVol) * entryScale * breathScale).toFixed(3)})`;
+  const target = Math.max(0, 1 - dist / maxD);
+  // one-pole smoothing on volume (original: player.volume += (vol - volume)*0.1), frame-rate independent
+  s.smVol += (target - s.smVol) * (1 - Math.pow(1 - TUNING.volSmoothing, dt * 25));
+  const vol = s.smVol;
+  // silent while the grey circle loads; fades in with the reveal (via the gain node)
+  setAudibleVol(s, vol * vol * TUNING.volumeGain * revealE);
+
+  // size = staticRadius*(1 + vu), vu = audio power (vibe) × volume — reacts to the playing sound
+  const vu = vibe * vol;
+  const fullScale = TUNING.sizeRest * (1 + vu * TUNING.sizeAudioGain);
+
+  // loading → reveal: expand from the small grey circle to the full image scale
+  const scale = TUNING.loadScale + (fullScale - TUNING.loadScale) * revealE;
+  const loadIn = Math.min(1, (now - s.born) / GRAY_FADE_MS);
+  const volOpacity = TUNING.opacityBase + vol * TUNING.opacityVol;
+  const opacity = loadIn * (TUNING.loadOpacity + (volOpacity - TUNING.loadOpacity) * revealE);
+
+  s._scale = scale; s._opacity = opacity;   // remembered for the trail/blur pass
+  s.el.style.opacity = opacity.toFixed(2);
+  s.el.style.transform = `translate(${s.x}px,${s.y}px) scale(${scale.toFixed(3)})`;
   return vol;
 }
 
@@ -648,40 +782,53 @@ function animate(time) {
 
   const W = appEl.clientWidth, H = appEl.clientHeight;
   const cx = W / 2, cy = H / 2;
+  const S = layoutScale(W, H);   // orbit/physics scale (leans toward the long edge)
   const maxD = Math.hypot(cx, cy);
   const now = Date.now();
   const toRemove = [];
 
-  // Apply gravitational attraction between all circles
-  applyGravity(dt);
+  // Centre logo rotation — eases up from 0 to full speed (smoothstep) so it doesn't snap on
+  if (logoSpinning) {
+    const rr = Math.min(1, (now - logoSpinStart) / 1000 / LOGO_RAMP_S);
+    const eased = rr * rr * (3 - 2 * rr);
+    logoAngle -= LOGO_SPIN_DEGPS * eased * dt;   // negative = reversed spin direction
+    infinityLogo.style.transform = `rotate(${logoAngle.toFixed(2)}deg)`;
+  }
 
   active.forEach((s, uid) => {
     const age = now - s.born;
-    const entryT = Math.min(1, age / ENTRY_DUR);
-    const entryE = easeOut3(entryT);
+
+    // Loading (grey circle) → reveal (expand + image fade). Held for LOAD_MIN_MS even
+    // when cached, then until the image is ready; revealE drives the expand.
+    // "Prepared" = image + audio buffered (cap avoids stalling forever on a slow buffer)
+    const prepared = s.imgReady && (s.audioEl.readyState >= 3 || age >= LOAD_MIN_MS + 5000);
+    if (!s.revealStart && age >= LOAD_MIN_MS && prepared) {
+      s.revealStart = now;
+      s.el.classList.add('revealed');   // CSS fades the image in over the grey circle
+      s.destX = s.x + s.bsz/2; s.destY = s.y + s.bsz/2;   // hand off to the attraction model from here
+      s.audioEl.play().catch(() => {}); // playback begins on reveal (grey phase was preparation only)
+    }
+    const revealE = s.revealStart ? easeOut3(Math.min(1, (now - s.revealStart) / REVEAL_DUR)) : 0;
 
     // Update audio-reactive breathing pulse
     updateVibration(s);
     const vibe = s.vibeAmount;
-    // Smooth breathing scale: range from 0.70 (quiet) to 1.35 (loud beat)
-    const breathScale = TUNING.breathBase + vibe * TUNING.breathVol;
 
     /* ---- DRAGGING ---- */
     if (s.phase === 'dragging') {
-      applyVolumeAndTransform(s, W, H, maxD, breathScale, 1, 1);
+      applyVolumeAndTransform(s, W, H, maxD, vibe, revealE, now, dt);
       return;
     }
 
     /* ---- THROWN ---- */
     if (s.phase === 'thrown') {
       if (frozen) {
-        // Frozen: stop immediately
+        // Frozen: stop immediately, resume orbiting in place
         s.phase = 'orbit';
-        const dx2 = s.x + s.bsz/2 - cx;
-        const dy2 = s.y + s.bsz/2 - cy;
-        s.orbitR = Math.max(30, Math.hypot(dx2, dy2));
-        s.angle = Math.atan2(dy2, dx2);
+        s.releaseVelocity = 0;          // ramp attraction back so it settles smoothly
+        s.accX = 0; s.accY = 0;
         s.throwVx = 0; s.throwVy = 0;
+        s.destX = s.x + s.bsz/2; s.destY = s.y + s.bsz/2;
         return;
       }
       const friction = Math.pow(0.4, dt);
@@ -690,14 +837,14 @@ function animate(time) {
       s.x += s.throwVx * dt;
       s.y += s.throwVy * dt;
 
-      applyVolumeAndTransform(s, W, H, maxD, breathScale, 1, 1);
+      applyVolumeAndTransform(s, W, H, maxD, vibe, revealE, now, dt);
 
       if (Math.hypot(s.throwVx, s.throwVy) < 15) {
-        const dx = s.x + s.bsz/2 - cx;
-        const dy = s.y + s.bsz/2 - cy;
-        s.orbitR = Math.max(30, Math.hypot(dx, dy));
-        s.angle = Math.atan2(dy, dx);
+        // Coast into the attraction model: keep residual velocity as drift, ramp attraction in
+        s.accX = s.throwVx; s.accY = s.throwVy;
+        s.releaseVelocity = 0;
         s.born = Date.now();
+        s.destX = s.x + s.bsz/2; s.destY = s.y + s.bsz/2;
         s.phase = 'orbit';
       }
 
@@ -710,54 +857,65 @@ function animate(time) {
 
     /* ---- ORBIT ---- */
     if (s.phase === 'orbit') {
-      if (!frozen) s.angle += s.angSpeed * dt;
+      if (!s.revealStart) {
+        // Grey loading circle: simple independent orbit around the centre —
+        // it moves, but neither affects nor is affected by other objects
+        if (!frozen) {
+          s.loadAngle += (TUNING.tangentialSpeed * Math.PI / 180) * dt;
+          s.x = cx + s.loadRadius * Math.cos(s.loadAngle) - s.bsz / 2;
+          s.y = cy + s.loadRadius * Math.sin(s.loadAngle) - s.bsz / 2;
+        }
+      } else if (!frozen) {
+        stepOrbit(s, dt, W, H, cx, cy, S, now);
+      }
 
-      s.x = cx + s.orbitR * Math.cos(s.angle) - s.bsz / 2;
-      s.y = cy + s.orbitR * Math.sin(s.angle) - s.bsz / 2;
-
-      applyVolumeAndTransform(s, W, H, maxD, breathScale, 0.2 + 0.8 * entryE, entryE);
+      applyVolumeAndTransform(s, W, H, maxD, vibe, revealE, now, dt);
 
       if (!frozen && age > DRIFT_AT) {
+        // Aged out: spiral outward — keep the orbital rotation, grow the radius gradually
         s.phase = 'drift';
-        const speed = Math.abs(s.angSpeed) * s.orbitR;
-        const sign = s.angSpeed > 0 ? 1 : -1;
-        const tVx = -Math.sin(s.angle) * speed * sign;
-        const tVy =  Math.cos(s.angle) * speed * sign;
-        const rVx = Math.cos(s.angle) * 25;
-        const rVy = Math.sin(s.angle) * 25;
-        s.driftVx = tVx * 0.5 + rVx;
-        s.driftVy = tVy * 0.5 + rVy;
+        const ddx = s.x + s.bsz/2 - cx, ddy = s.y + s.bsz/2 - cy;
+        s.driftRadius = Math.hypot(ddx, ddy) || 1;
+        s.driftAngle = Math.atan2(ddy, ddx);
+        s.driftT = 0;
       }
       return;
     }
 
-    /* ---- DRIFT ---- */
+    /* ---- DRIFT (spiral outward: keep rotating, radius grows) ---- */
     if (s.phase === 'drift') {
       if (frozen) {
-        // Frozen: stop drift, lock in place as orbit
+        // Frozen: resume orbiting in place
         s.phase = 'orbit';
-        const dx2 = s.x + s.bsz/2 - cx;
-        const dy2 = s.y + s.bsz/2 - cy;
-        s.orbitR = Math.max(30, Math.hypot(dx2, dy2));
-        s.angle = Math.atan2(dy2, dx2);
-        s.driftVx = 0; s.driftVy = 0;
+        s.releaseVelocity = 0;
+        s.accX = 0; s.accY = 0;
+        s.destX = s.x + s.bsz/2; s.destY = s.y + s.bsz/2;
         return;
       }
-      s.x += s.driftVx * dt;
-      s.y += s.driftVy * dt;
+      s.driftT += dt;
+      const dr = Math.min(1, s.driftT / DRIFT_RAMP_S);
+      const ramp = dr * dr * (3 - 2 * dr);                            // ease the outward speed in from 0
+      s.driftAngle += (TUNING.tangentialSpeed * Math.PI / 180) * dt;  // rotation stays continuous
+      s.driftRadius += TUNING.driftSpeed * S * ramp * dt;             // outward drift eases in (no sudden release)
+      s.x = cx + s.driftRadius * Math.cos(s.driftAngle) - s.bsz/2;
+      s.y = cy + s.driftRadius * Math.sin(s.driftAngle) - s.bsz/2;
 
-      applyVolumeAndTransform(s, W, H, maxD, breathScale, 1, 1);
+      applyVolumeAndTransform(s, W, H, maxD, vibe, revealE, now, dt);
 
-      const scx = s.x + s.bsz/2, scy = s.y + s.bsz/2;
-      if (scx < -s.bsz || scx > W + s.bsz || scy < -s.bsz || scy > H + s.bsz) {
+      // Natural motion: keep spiralling even while off-screen — it can weave back into view.
+      // Remove only once the whole orbit is beyond the farthest corner (can never return).
+      if (s.driftRadius > maxD + s.bsz) {
         toRemove.push(uid);
       }
       return;
     }
   });
 
+  // Hard non-overlap backstop near the center (after all positions settle)
+  if (!frozen) separateHard(cx, cy, S);
+
   toRemove.forEach(uid => rmSound(uid));
-  drawTrailFrame(W, H);
+  drawTrailFrame(W, H, dt);
 }
 
 function updCount() {
@@ -771,7 +929,7 @@ function schedNext() {
   nxtTimer = setTimeout(() => {
     if (!frozen && active.size < MAX) spawn();
     schedNext();
-  }, 4500 + Math.random() * 3500);
+  }, SPAWN_INTERVAL_MS + Math.random() * SPAWN_INTERVAL_RAND);
 }
 
 /* ======== POINTER ======== */
@@ -865,29 +1023,33 @@ function onUp() {
   }
 
   // Drop in place (frozen: no inertia; unfrozen: below throw threshold)
-  const cxS = appEl.clientWidth / 2, cyS = appEl.clientHeight / 2;
-  const dx = s.x + s.bsz/2 - cxS;
-  const dy = s.y + s.bsz/2 - cyS;
-  s.orbitR = Math.max(30, Math.hypot(dx, dy));
-  s.angle = Math.atan2(dy, dx);
+  s.accX = 0; s.accY = 0;
+  s.releaseVelocity = 0;            // ramp attraction back so it re-captures smoothly
+  s.destX = s.x + s.bsz/2; s.destY = s.y + s.bsz/2;
   if (s.prevPhase === 'drift' || s.prevPhase === 'thrown') s.born = Date.now();
   s.phase = 'orbit';
   dragTgt = null; dHist = [];
 }
 
 /* ======== FREEZE ======== */
+let freezeStartT = 0;
 function togFreeze() {
   frozen = !frozen;
   const w = document.getElementById('infinity-wrap');
   const l = document.getElementById('freeze-label');
   const ex = document.getElementById('btn-export');
   if (frozen) {
+    freezeStartT = Date.now();
     appEl.classList.add('frozen');
     w.classList.add('frozen');
     l.classList.add('show');
     if (active.size > 0) ex.classList.add('show');
     clearTimeout(nxtTimer);
   } else {
+    // Lifespan pauses while frozen: shift each object's birth forward by the frozen duration
+    // (original: life only accrues when totalMovement == 1)
+    const frozenDur = Date.now() - freezeStartT;
+    active.forEach(o => { o.born += frozenDur; });
     appEl.classList.remove('frozen');
     w.classList.remove('frozen');
     l.classList.remove('show');
@@ -902,14 +1064,12 @@ function openDetail(s) {
   lastT = 0;
 
   active.forEach(o => {
-    try {
-      if (o.uid === s.uid) {
-        o.audioEl.volume = 0.25;
-      } else {
-        o._savedVol = o.audioEl.volume;
-        o.audioEl.volume = 0;
-      }
-    } catch(e) {}
+    if (o.uid === s.uid) {
+      setAudibleVol(o, 0.25);
+    } else {
+      o._savedVol = getAudibleVol(o);
+      setAudibleVol(o, 0);
+    }
   });
 
   const dc = document.getElementById('detail-content');
@@ -940,7 +1100,7 @@ function openDetail(s) {
 function closeDetail() {
   active.forEach(o => {
     if (detailTarget && o.uid !== detailTarget.uid && o._savedVol !== undefined) {
-      try { o.audioEl.volume = o._savedVol; } catch(e) {}
+      setAudibleVol(o, o._savedVol);
       delete o._savedVol;
     }
   });
@@ -1006,7 +1166,7 @@ async function exportMix() {
 
     const loads = [];
     active.forEach(s => {
-      const vol = s.audioEl.volume;
+      const vol = getAudibleVol(s);
       const p = fetch(ASSET_DIR + s.pair.ear)
         .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
         .then(ab => offCtx.decodeAudioData(ab))
@@ -1059,10 +1219,17 @@ async function startApp() {
   if (started) return;
   started = true;
   resizeTrail();
+  // Intro: shrink the title logo into the centre
+  document.getElementById('infinity-scaler').classList.remove('intro');
   document.getElementById('start-overlay').classList.add('hidden');
   await loadPairs();
-  spawn();
-  schedNext();
+  // Once the logo has settled: start it spinning, then spawn the first object
+  setTimeout(() => {
+    document.getElementById('infinity-wrap').classList.remove('intro');
+    logoSpinning = true; logoSpinStart = Date.now();   // rotation eases in from 0
+    spawn();
+    schedNext();
+  }, LOGO_INTRO_MS);
 }
 
 // Click-to-start overlay

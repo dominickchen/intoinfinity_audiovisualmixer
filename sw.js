@@ -1,10 +1,10 @@
-const CACHE_NAME = 'intoinfinity-v1';
+const CACHE_NAME = 'intoinfinity-v2';
 
 // Assets to pre-cache on install
 const PRECACHE = [
   './',
   './index.html',
-  './INTO_INFINITY_LOGO.png',
+  './INTO_INFINITY_LOGO.svg',
   './paring.json'
 ];
 
@@ -31,14 +31,20 @@ self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
   const path = url.pathname;
 
+  // Only handle same-origin http(s) GETs — never touch chrome-extension:, data:, POSTs, etc.
+  if (event.request.method !== 'GET' || (url.protocol !== 'http:' && url.protocol !== 'https:')) {
+    return;
+  }
+
   // EYE_EAR assets: cache-first strategy
-  if (path.includes('/EYE_EAR/') || path.endsWith('INTO_INFINITY_LOGO.png') || path.endsWith('paring.json')) {
+  if (path.includes('/EYE_EAR/') || path.endsWith('INTO_INFINITY_LOGO.svg') || path.endsWith('paring.json')) {
     event.respondWith(
       caches.open(CACHE_NAME).then(cache =>
         cache.match(event.request).then(cached => {
           if (cached) return cached;
           return fetch(event.request).then(response => {
-            if (response.ok) {
+            // Only cache full 200 responses — 206 partials (audio Range requests) can't be put()
+            if (response.status === 200) {
               cache.put(event.request, response.clone());
             }
             return response;
@@ -53,7 +59,7 @@ self.addEventListener('fetch', event => {
   event.respondWith(
     fetch(event.request)
       .then(response => {
-        if (response.ok) {
+        if (response.status === 200) {   // skip 206 partials & other non-cacheable statuses
           const clone = response.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
         }
