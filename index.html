@@ -28,9 +28,10 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 /* Intro: sit above the start overlay as the title, and let taps pass through to it */
 #infinity-wrap.intro{z-index:101;pointer-events:none}
 /* Scaler shrinks from title size to centre size on start */
-#infinity-scaler{transition:transform 1.1s ease-in-out}
-#infinity-scaler.intro{transform:scale(2.7)}
-#infinity-logo{width:200px;height:auto;pointer-events:none;transition:filter .4s;will-change:transform}
+#infinity-scaler{transition:transform var(--intro-dur,1.15s) ease-in-out}
+#infinity-scaler.intro{transform:scale(var(--intro-scale,3.2))}
+/* width here is a no-JS fallback only — JS (TUNING.logo*, via logoWidth) sets the real capped width before first paint */
+#infinity-logo{width:min(22vw,22vh);height:auto;pointer-events:none;transition:filter .4s;will-change:transform}
 #infinity-wrap.frozen{filter:drop-shadow(0 0 16px rgba(70,130,255,.5)) drop-shadow(0 0 36px rgba(70,130,255,.25))}
 #infinity-wrap.frozen #infinity-logo{filter:brightness(1.2) saturate(1.4)}
 
@@ -88,13 +89,10 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 .grid-item img{width:100%;height:100%;border-radius:50%;object-fit:cover}
 .grid-item-label{position:absolute;bottom:-14px;left:50%;transform:translateX(-50%);text-align:center;font-size:.38rem;color:#666;padding:1px 3px;line-height:1.2;letter-spacing:.02em;white-space:nowrap}
 
-/* Share */
-#share-modal .mix-info{font-size:.7rem;background:#f8f8f5;border-radius:8px;padding:12px;margin:10px 0;color:#555;line-height:1.6;white-space:pre-wrap}
-
 /* Sound circles */
 .sound-circle{position:absolute;border-radius:50%;cursor:grab;will-change:transform,opacity;z-index:3;background:#c2c2c2}
 .sound-circle:active{cursor:grabbing}
-.sound-circle img{width:100%;height:100%;border-radius:50%;object-fit:cover;pointer-events:none;opacity:0;transition:opacity .6s ease;animation:disc-spin var(--spin-dur,8s) linear infinite var(--spin-dir,normal)}
+.sound-circle img{width:100%;height:100%;border-radius:50%;object-fit:cover;pointer-events:none;opacity:0;transition:opacity .6s ease;animation:disc-spin var(--spin-dur,14.4s) linear infinite}
 .sound-circle.revealed img{opacity:1}
 @keyframes disc-spin{to{transform:rotate(360deg)}}
 
@@ -102,7 +100,7 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 #detail-modal{background:rgba(0,0,0,.35)}
 #app.frozen #detail-modal{filter:invert(1)}
 #detail-modal .detail-content{display:flex;flex-direction:column;align-items:center;cursor:pointer;padding:20px}
-#detail-modal .detail-img{width:min(52vw,52vh);height:min(52vw,52vh);border-radius:50%;object-fit:cover;box-shadow:0 8px 40px rgba(0,0,0,.2);margin-bottom:20px;animation:disc-spin 14.4s linear infinite}
+#detail-modal .detail-img{width:min(52vw,52vh);height:min(52vw,52vh);border-radius:50%;object-fit:cover;box-shadow:0 8px 40px rgba(0,0,0,.2);margin-bottom:20px;animation:disc-spin var(--spin-dur,14.4s) linear infinite}
 #detail-modal .detail-info{text-align:center;color:rgba(255,255,255,.88)}
 #detail-modal .detail-info p{font-size:.78rem;line-height:1.9;letter-spacing:.04em;font-weight:300}
 #detail-modal .detail-info .label{font-size:.55rem;color:rgba(255,255,255,.45);letter-spacing:.1em;text-transform:uppercase;margin-bottom:2px}
@@ -166,16 +164,6 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
     </div>
   </div>
 
-  <!-- Share Modal -->
-  <div class="modal-overlay" id="share-modal">
-    <div class="modal-box">
-      <h2>Current Mix</h2>
-      <div class="mix-info" id="mix-info"></div>
-      <button class="close-btn" id="copy-btn">Copy to Clipboard</button>
-      <button class="close-btn" onclick="closeModal('share-modal')">Close</button>
-    </div>
-  </div>
-
   <!-- Detail Modal -->
   <div class="modal-overlay" id="detail-modal">
     <div class="detail-content" id="detail-content"></div>
@@ -197,11 +185,12 @@ const DRIFT_AT  = 48000;    // ms of life before an object starts drifting outwa
 const LOAD_MIN_MS  = 3000;  // min time the grey loading circle shows (even when cached)
 const REVEAL_DUR   = 700;   // ms to expand + fade from grey circle to the image
 const GRAY_FADE_MS = 250;   // ms for the grey loading circle to fade in on birth
-const LOGO_INTRO_MS = 1150; // ms for the title logo to shrink to centre before the first spawn (matches CSS 1.1s)
+const LOGO_INTRO_MS = 1150; // ms for the title logo to shrink to centre before the first spawn (also drives the CSS transition via --intro-dur)
 const SPAWN_INTERVAL_MS   = 7000;  // min gap between object spawns (was 4500)
 const SPAWN_INTERVAL_RAND = 5000;  // + random up to this (→ 7–12s spacing)
 const LOGO_SPIN_DEGPS = 22.5; // steady centre-logo rotation speed (deg/s ≈ 16s per turn)
 const LOGO_RAMP_S = 0.5;      // seconds to ease the logo rotation from 0 up to full speed
+const DISC_SPIN_S = 14.4;    // seconds per disc self-rotation (25°/s), uniform for all discs — also drives the CSS via --spin-dur
 // Trail blur: blurAmount = BLUR_BASE + BLUR_AMP*cos(t/PERIOD*2π), applied as a per-frame fade of the accumulation
 const BLUR_BASE = 24, BLUR_AMP = 18, BLUR_PERIOD_S = 120; // breathes 6..42 over 120s
 const TRAIL_MIN_FADE = 0.05;  // Canvas-2D fallback only: floor on per-frame fade so faint trails clear (8-bit residue). The WebGL float16 path needs no floor.
@@ -227,10 +216,10 @@ const TUNING = {
   objDiameterMin:   105,
   objDiameterMax:   150,
 
-  /* --- centre logo size (px, clamped) — driven live each frame --- */
-  logoRatio:        0.22,   // logo width = ratio * layoutScale(W,H)
-  logoMin:          96,     // px floor (tiny windows)
-  logoMax:          200,    // px cap — reached on medium+ windows so both orientations match
+  /* --- centre logo size — JS (logoWidth) is the single source of truth; CSS only a no-JS fallback --- */
+  logoRatio:        0.22,   // resting logo width = ratio * min(W,H)  (short edge → always fits portrait width)
+  logoMax:          200,    // px cap so it doesn't get huge on large screens
+  logoIntroScale:   3.2,    // title logo = resting size × this; the intro shrinks from ×this to ×1
 
   /* --- spawn orbit placement (ratios of S) --- */
 
@@ -274,19 +263,17 @@ const TUNING = {
   separationHardCorrect: true, // hard-correct residual overlap inside the zone…
   separationHardRate:  0.35,   // …but only this fraction per frame, so it eases apart instead of snapping
 
-  /* --- audio spatialization / reactivity (Phase 3/4/5) --- */
-  panRange:      1.0,       // stereo pan strength (Phase 3)
-  volSmoothing:  0.10,      // one-pole volume smoothing coeff (Phase 4)
-  volBandRatio:  80/320,    // distance band over which volume fades (Phase 4)
-  sizeReactivity: 1.0,      // VU→size gain (Phase 5)
+  /* --- audio spatialisation / reactivity --- */
+  panRange:      1.0,       // stereo pan strength
+  volSmoothing:  0.10,      // one-pole volume smoothing coeff
   /* ripple: fired on loud beats, expands outward over 2s, drawn INTO the
      trail feedback so it smears like everything else */
   rippleThresh:    0.25,    // VU (vibe×vol) level that fires a ripple
   rippleDuration:  2.0,     // seconds to expand + fade
   // Ripple size scales with the EMITTING DISC's rest radius (not the screen), so the
   // proportion holds on any screen (disc size is clamped; the screen scale isn't).
-  rippleSrcScale:  (4 / 28) * 0.70,  // start radius, × disc rest radius
-  rippleDestScale: (96 / 28) * 0.70, // end radius,   × disc rest radius
+  rippleSrcScale:  0.10,    // start radius, × disc rest radius
+  rippleDestScale: 2.40,    // end radius,   × disc rest radius
   // IMPORTANT: in a feedback loop the accumulation converges to the INK COLOUR — grey ink
   // can never build past its own grey, so ink colour + deposit alpha together set how dark
   // the haze can get. These are deliberately SUBTLE deposits — float16 keeps them smooth at any level.
@@ -300,9 +287,8 @@ const TUNING = {
   ringGreyBase:    0.2,     // ring ink flicker: grey = base + amp·cos(π·age)
   ringGreyAmp:     0.2,
 
-  /* --- lifespan (Phase 2) --- */
-  lifeSoft: 64,             // becomes ejectable / attraction weakens
-  lifeHard: 256             // hard removal
+  /* --- lifespan --- */
+  lifeSoft: 64              // youth window (s): a neighbour's attraction weakens as it ages past this
 };
 
 /* clamp helper */
@@ -315,17 +301,17 @@ function layoutScale(W, H) {
   return lo + (hi - lo) * TUNING.aspectSpread;
 }
 
-/* disc box diameter (px) and centre-logo width (px). Both scale off the SAME layout
- * scale S as the orbits, so the whole composition (orbits + disc + logo) stays in the
- * same proportion at any window shape — the size feel is consistent between landscape
- * and portrait, not just tied to the short edge. Live-tunable via TUNING. */
+/* disc box diameter (px) and centre-logo width (px), live-tunable via TUNING.
+ * Discs scale off the layout scale S (like the orbits) so they grow with the whole
+ * composition and stay consistent across aspect ratios. The centre logo scales off the
+ * SHORT edge min(W,H) with a px cap, so it always fits the width in portrait and never
+ * balloons on wide/landscape windows. */
 function objDiameter(W, H) {
   const S = layoutScale(W, H);
   return clamp(TUNING.objDiameterMin, TUNING.objDiameterRatio * S, TUNING.objDiameterMax);
 }
 function logoWidth(W, H) {
-  const S = layoutScale(W, H);
-  return clamp(TUNING.logoMin, TUNING.logoRatio * S, TUNING.logoMax);
+  return Math.min(TUNING.logoRatio * Math.min(W, H), TUNING.logoMax);
 }
 
 // Expose for live tuning from the devtools console, e.g. TUNING.objDiameterRatio = 0.22
@@ -797,11 +783,7 @@ async function spawn(pairIdOverride) {
   const img = document.createElement('img');
   img.src = ASSET_DIR + pair.eye;
   img.draggable = false;
-  const spinDur = 14.4;      // seconds per self-rotation (25°/s), uniform for all discs
-  const spinDir = 'normal';  // one rotation direction for all discs
-  img.style.setProperty('--spin-dur', spinDur + 's');
-  img.style.setProperty('--spin-dir', spinDir);
-  el.appendChild(img);
+  el.appendChild(img);   // disc self-rotation is uniform (CSS animation @ --spin-dur, set from DISC_SPIN_S at init)
 
   appEl.appendChild(el);
   el.dataset.uid = uid;
@@ -820,8 +802,8 @@ async function spawn(pairIdOverride) {
     el, audioEl, pairId, pair,
     born: Date.now(), bsz, uid,
     x: initX - bsz/2, y: initY - bsz/2,
-    phase: 'orbit',           // orbit | drift | dragging | thrown
-    // Attraction model (Phase 1): target center-position + drift accel + throw recapture ramp
+    phase: 'orbit',           // orbit | dragging | thrown
+    // Attraction model: target center-position + drift accel + throw recapture ramp
     destX: initX, destY: initY,
     accX: Math.cos(angle) * TUNING.accInit * S,
     accY: Math.sin(angle) * TUNING.accInit * S,
@@ -832,8 +814,6 @@ async function spawn(pairIdOverride) {
     rippleStart: -1,                           // active ripple's start time (-1 = none)
     ringA: 0,                                  // smoothed orbit-ring opacity
     throwVx: 0, throwVy: 0,
-    // Disc spin (mirrors the CSS disc-spin animation, used for trail rotation)
-    spinDur, spinDirSign: spinDir === 'reverse' ? -1 : 1,
     // Loading → reveal state (grey circle until the image is ready + LOAD_MIN_MS)
     revealStart: 0, imgReady: false,
     // Audio analyser for vibration
@@ -955,7 +935,7 @@ function stepOrbit(s, dt, W, H, cx, cy, S, now) {
   s.destX = px; s.destY = py;
 
   // 5) integrate rendered position toward the target (frame-rate independent)
-  const k = 1 - Math.pow(1 - TUNING.posLerp, dt * 25);
+  const k = 1 - Math.pow(1 - TUNING.posLerp, dt * REF_FPS);
   const ncx = (s.x + s.bsz / 2) + (s.destX - (s.x + s.bsz / 2)) * k;
   const ncy = (s.y + s.bsz / 2) + (s.destY - (s.y + s.bsz / 2)) * k;
   s.x = ncx - s.bsz / 2;
@@ -1098,8 +1078,8 @@ function drawTrailFrameGL(W, H, dt) {
       if (img && img.complete && img.naturalWidth) s.glTex = glUploadTexture(img, true);
       if (!s.glTex) return;
     }
-    const frac = ((now - s.born) / 1000 / s.spinDur) % 1;
-    const rot = s.spinDirSign * frac * Math.PI * 2;
+    const frac = ((now - s.born) / 1000 / DISC_SPIN_S) % 1;
+    const rot = frac * Math.PI * 2;
     sprite(s.glTex, dcx, dcy, r * 2, r * 2, rot, 0, 0, 0, op, 0, 1, 0);
   });
 
@@ -1210,8 +1190,8 @@ function drawTrailFrame2D(W, H, dt) {
     if (!img || !img.complete || !img.naturalWidth) return;
 
     // Rotation from elapsed time × spin speed (mirrors the CSS disc-spin animation)
-    const frac = ((now - s.born) / 1000 / s.spinDur) % 1;
-    const rot = s.spinDirSign * frac * Math.PI * 2;
+    const frac = ((now - s.born) / 1000 / DISC_SPIN_S) % 1;
+    const rot = frac * Math.PI * 2;
 
     trailCtx.save();
     trailCtx.globalAlpha = op;
@@ -1247,7 +1227,7 @@ function applyVolumeAndTransform(s, W, H, maxD, vibe, revealE, now, dt) {
   const dist = d2c(s.x + s.bsz/2, s.y + s.bsz/2, W, H);
   const target = Math.max(0, 1 - dist / maxD);
   // one-pole smoothing on volume, frame-rate independent
-  s.smVol += (target - s.smVol) * (1 - Math.pow(1 - TUNING.volSmoothing, dt * 25));
+  s.smVol += (target - s.smVol) * (1 - Math.pow(1 - TUNING.volSmoothing, dt * REF_FPS));
   const vol = s.smVol;
   // silent while the grey circle loads; fades in with the reveal (via the gain node)
   setAudibleVol(s, vol * vol * TUNING.volumeGain * revealE);
@@ -1466,7 +1446,7 @@ function onDown(e) {
   }
 
   const s = findAt(pos.x, pos.y);
-  if (s && (s.phase === 'orbit' || s.phase === 'drift' || s.phase === 'thrown')) {
+  if (s && (s.phase === 'orbit' || s.phase === 'thrown')) {
     dragTgt = s;
     s.prevPhase = s.phase;
     s.phase = 'dragging';
@@ -1527,7 +1507,7 @@ function onUp() {
   s.accX = 0; s.accY = 0;
   s.releaseVelocity = 0;            // ramp attraction back so it re-captures smoothly
   s.destX = s.x + s.bsz/2; s.destY = s.y + s.bsz/2;
-  if (s.prevPhase === 'drift' || s.prevPhase === 'thrown') s.born = Date.now();
+  if (s.prevPhase === 'thrown') s.born = Date.now();
   s.phase = 'orbit';
   dragTgt = null; dHist = [];
 }
@@ -1779,14 +1759,6 @@ function buildGrid() {
   }
 }
 
-function updShare() {
-  const info = document.getElementById('mix-info');
-  if (!active.size) { info.textContent = 'No sounds playing.'; return; }
-  const parts = [];
-  active.forEach(s => parts.push('#' + s.pairId + ' EAR: ' + s.pair.earArtist + ' \u00D7 EYE: ' + s.pair.eyeArtist));
-  info.textContent = 'INTO INFINITY Mix:\n' + parts.join('\n') + '\n#intoinfinity';
-}
-
 /* ======== EVENTS ======== */
 appEl.addEventListener('mousedown', onDown);
 document.addEventListener('mousemove', onMove);
@@ -1799,26 +1771,29 @@ document.getElementById('btn-info').addEventListener('click', e => { e.stopPropa
 document.getElementById('btn-grid').addEventListener('click', e => { e.stopPropagation(); buildGrid(); openModal('grid-modal'); });
 document.getElementById('btn-export').addEventListener('click', e => { e.stopPropagation(); exportMix(); });
 
-document.getElementById('copy-btn').addEventListener('click', () => {
-  const txt = document.getElementById('mix-info').textContent;
-  navigator.clipboard.writeText(txt).then(() => {
-    document.getElementById('copy-btn').textContent = 'Copied!';
-    setTimeout(() => { document.getElementById('copy-btn').textContent = 'Copy to Clipboard'; }, 1200);
-  }).catch(() => {});
-});
-
 document.getElementById('detail-modal').addEventListener('click', () => {
   if (detailTarget) closeDetail();
 });
 
-['info-modal', 'grid-modal', 'share-modal'].forEach(id => {
+['info-modal', 'grid-modal'].forEach(id => {
   document.getElementById(id).addEventListener('click', e => {
     if (e.target.classList.contains('modal-overlay')) closeModal(id);
   });
 });
 
-window.addEventListener('resize', resizeTrail);
+window.addEventListener('resize', () => {
+  resizeTrail();
+  if (!started) updateSizes(appEl.clientWidth, appEl.clientHeight);  // pre-start: keep the title logo sized (running frames do this in animate)
+});
 document.addEventListener('contextmenu', e => e.preventDefault());
+
+// Logo sizing is JS-authoritative: seed the intro scale/duration and the initial size now (before
+// first paint), so the title logo, its magnification and its shrink-to-centre all derive from one
+// source each (TUNING.logo* for size, LOGO_INTRO_MS for the shrink duration the CSS transition uses).
+document.documentElement.style.setProperty('--intro-scale', TUNING.logoIntroScale);
+document.documentElement.style.setProperty('--intro-dur', (LOGO_INTRO_MS / 1000) + 's');
+document.documentElement.style.setProperty('--spin-dur', DISC_SPIN_S + 's');   // disc self-rotation, one source for all discs + the detail view
+updateSizes(appEl.clientWidth, appEl.clientHeight);
 
 // Start animation loop (app starts on overlay click)
 requestAnimationFrame(animate);
