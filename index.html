@@ -47,7 +47,7 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 .corner-btn{position:absolute;z-index:20;width:32px;height:32px;border-radius:50%;border:1.2px solid rgba(0,0,0,.12);background:rgba(255,255,255,.55);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px);display:flex;align-items:center;justify-content:center;cursor:pointer;transition:background .2s,border-color .2s,transform .15s;font-size:.65rem;color:#777}
 .corner-btn:hover{background:rgba(255,255,255,.85);border-color:rgba(0,0,0,.22)}
 .corner-btn:active{transform:scale(.9)}
-#btn-info{top:16px;left:16px;font-style:italic;font-weight:700;font-family:Georgia,'Times New Roman',serif;font-size:.72rem}
+#btn-info{bottom:16px;right:16px;font-style:italic;font-weight:700;font-family:Georgia,'Times New Roman',serif;font-size:.72rem}
 #btn-grid{bottom:16px;left:16px}
 #btn-grid svg{width:14px;height:14px;opacity:.7}
 
@@ -65,6 +65,7 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 
 /* Sound count */
 #sound-count{position:absolute;top:16px;right:16px;z-index:20;font-size:.52rem;letter-spacing:.06em;color:rgba(0,0,0,.2);font-weight:300}
+#ticker{position:absolute;top:15px;left:50%;transform:translateX(-50%);z-index:20;max-width:calc(100% - 110px);text-align:center;font-family:'Courier New',Courier,monospace;font-size:clamp(11px,1.6vmin,18px);letter-spacing:.03em;color:#1a1a1a;opacity:0;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* Modal */
 .modal-overlay{position:absolute;inset:0;z-index:200;background:rgba(0,0,0,.25);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .25s}
@@ -138,6 +139,7 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
     <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x=".5" y=".5" width="5" height="5" rx=".8"/><rect x="8.5" y=".5" width="5" height="5" rx=".8"/><rect x=".5" y="8.5" width="5" height="5" rx=".8"/><rect x="8.5" y="8.5" width="5" height="5" rx=".8"/></svg>
   </div>
   <div id="sound-count"></div>
+  <div id="ticker"></div>
 
   <!-- Info Modal -->
   <div class="modal-overlay" id="info-modal">
@@ -704,6 +706,31 @@ function pickNext() {
   return null;
 }
 
+/* ======== TICKER — one-line top-centre banner ========
+ * Announces each object: "Incoming …" on birth, "Playing …" when it starts.
+ * One line at a time; a new message replaces the current one. Timeline:
+ * 0.25s delay → 0.33s fade-in to peak → hold → fade out. Black text that
+ * inverts with the freeze filter (it lives inside #app).
+ */
+const TICKER_OPACITY = 0.8;   // peak opacity
+const TICKER_HOLD_MS = 4250;  // time from show to the start of fade-out
+const tickerEl = document.getElementById('ticker');
+let tickerOutTimer = 0;
+function showTicker(text) {
+  if (!tickerEl) return;
+  clearTimeout(tickerOutTimer);
+  tickerEl.textContent = text;
+  tickerEl.style.transition = 'none';
+  tickerEl.style.opacity = '0';
+  void tickerEl.offsetWidth;                              // reflow so the fade-in restarts
+  tickerEl.style.transition = 'opacity .33s linear .25s'; // 0.25s delay, then fade in
+  tickerEl.style.opacity = String(TICKER_OPACITY);
+  tickerOutTimer = setTimeout(() => {
+    tickerEl.style.transition = 'opacity .8s ease-out';
+    tickerEl.style.opacity = '0';
+  }, TICKER_HOLD_MS);
+}
+
 async function spawn(pairIdOverride) {
   if (active.size >= MAX || PAIRS.length === 0) return;
 
@@ -720,6 +747,8 @@ async function spawn(pairIdOverride) {
 
   const pair = PAIRS[pairId];
   if (!pair) { activePairs.delete(pairId); return; }
+
+  showTicker('Incoming ' + pair.eyeArtist + ' x ' + pair.earArtist);
 
   const uid = uid_++;
   const W = appEl.clientWidth, H = appEl.clientHeight;
@@ -1266,6 +1295,7 @@ function animate(time) {
       s.el.classList.add('revealed');   // CSS fades the image in over the grey circle
       s.destX = s.x + s.bsz/2; s.destY = s.y + s.bsz/2;   // hand off to the attraction model from here
       s.audioEl.play().catch(() => {}); // playback begins on reveal (grey phase was preparation only)
+      showTicker('Playing ' + s.pair.eyeArtist + ' x ' + s.pair.earArtist);
     }
     const revealE = s.revealStart ? easeOut3(Math.min(1, (now - s.revealStart) / REVEAL_DUR)) : 0;
 
