@@ -191,8 +191,7 @@ if ('serviceWorker' in navigator) {
 /* ======== CONSTANTS ======== */
 let   TOTAL = 157;          // pair count — re-derived from PAIRS.length after load
 const MAX   = 4;            // max simultaneous sounds
-const DRIFT_AT  = 48000;    // ms before drift phase begins (original used ~64s; 48s here)
-const DRIFT_RAMP_S = 2.5;   // seconds for the outward spiral speed to ease in (force drains gradually)
+const DRIFT_AT  = 48000;    // ms of life before an object starts drifting outward
 const LOAD_MIN_MS  = 3000;  // min time the grey loading circle shows (even when cached)
 const REVEAL_DUR   = 700;   // ms to expand + fade from grey circle to the image
 const GRAY_FADE_MS = 250;   // ms for the grey loading circle to fade in on birth
@@ -201,7 +200,7 @@ const SPAWN_INTERVAL_MS   = 7000;  // min gap between object spawns (was 4500)
 const SPAWN_INTERVAL_RAND = 5000;  // + random up to this (→ 7–12s spacing)
 const LOGO_SPIN_DEGPS = 22.5; // steady centre-logo rotation speed (deg/s ≈ 16s per turn)
 const LOGO_RAMP_S = 0.5;      // seconds to ease the logo rotation from 0 up to full speed
-// Trail blur (original MainLayer.m: blurAmount = BLUR_BASE + BLUR_AMP*cos(t/PERIOD*2π), faded /255 per frame @25fps)
+// Trail blur: blurAmount = BLUR_BASE + BLUR_AMP*cos(t/PERIOD*2π), applied as a per-frame fade of the accumulation
 const BLUR_BASE = 24, BLUR_AMP = 18, BLUR_PERIOD_S = 120; // breathes 6..42 over 120s
 const TRAIL_MIN_FADE = 0.05;  // Canvas-2D fallback only: floor on per-frame fade so faint trails clear (8-bit residue). The WebGL float16 path needs no floor.
 const TRAIL_LOGO_ALPHA = 0.6; // how strongly the centre logo burns into the trail
@@ -215,8 +214,6 @@ const BG_R = 245, BG_G = 245, BG_B = 240; // background colour for trail fade
  * geometrically similar on any screen size / aspect ratio. Some fields are
  * defined here but only wired up in a later phase (noted inline) — this keeps
  * the table complete and ready for a future URL-query / debug-UI override.
- * Original iOS px constants were captured on a ~320px-wide portrait screen,
- * so ratios below are seeded as (origPx / 320) where relevant.
  */
 const TUNING = {
   /* --- layout scale --- */
@@ -229,15 +226,11 @@ const TUNING = {
   objDiameterMax:   150,
 
   /* --- spawn orbit placement (ratios of S) --- */
-  orbitRadiusRatio: 0.35,   // base orbit radius
-  orbitJitterBase:  0.55,   // × (base + rand*range)
-  orbitJitterRange: 0.60,
 
   /* --- audio→visual response (unitless) --- */
   volumeGain:  0.25,        // audioEl.volume = vol*vol*volumeGain
-  // Size follows the ORIGINAL iOS model (Ball.m:356): radius = staticRadius*(1 + vu),
-  // where vu = audio power × volume. (No spring — Spring.m is dead code in the original.)
-  sizeRest:      0.70,      // rest size (staticRadius equivalent) when there's no audio energy
+  // Size: radius = sizeRest*(1 + vu), where vu = audio loudness × volume.
+  sizeRest:      0.70,      // rest size when there's no audio energy
   sizeAudioGain: 1.0,       // how strongly vu (audio×volume) expands the size outward
   vibeGain:      3.0,       // amplifies the measured audio loudness (RMS) into the 0..1 reactivity
   opacityBase: 0.35,        // circle opacity = opacityBase + vol*opacityVol
@@ -246,12 +239,14 @@ const TUNING = {
   loadOpacity: 0.55,        // opacity of the grey loading circle
 
   /* --- physics (dest-integration attraction model; rates are per SECOND, dt-based) --- */
-  posLerp:          0.07,   // position ease toward target — lower = floatier lag (0.1/frame @25fps ref)
+  posLerp:          0.07,   // position ease toward target — lower = floatier lag
   damping:          0.25,   // fraction of drift acceleration retained per second
   captureRate:      0.6,    // rate/s easing an object toward its target orbit ring
   tangentialSpeed:  14,     // deg/second orbital spin (satellite rotation) — lower = slower, floatier
-  centerOrbitRatio: 0.30,   // target ring radius around the center ∞ (ratio of S)
+  centerOrbitRatio: 0.25,   // target ring radius around the center ∞ (ratio of S)
   objOrbitRatio:    0.17,   // target ring radius around another object (ratio of S)
+  orbitJitter:      0.06,   // per-object target-radius offset (ratio of S) so objects don't stack on the
+                            //   same ring. Also spreads the centre rings apart.
   centerAreaRatio:  0.45,   // center attraction reach beyond its ring (ratio of S)
   objAreaRatio:     0.40,   // object attraction reach beyond its ring (ratio of S)
   gravityPull:      1.0,    // centre attraction multiplier
@@ -259,9 +254,10 @@ const TUNING = {
   vitalityCurve:    2.0,    // exponent on youth: >1 makes just-born objects dominate the pull
   accInit:          0.10,   // initial drift-acceleration magnitude (ratio of S → px/s)
   releaseRamp:      1.0,    // seconds for releaseVelocity 0→1 after a throw/drop (suppresses then restores attraction)
-  driftSpeed:       0.10,   // outward speed when an aged object enters the drift phase (ratio of S → px/s)
+  driftGrow:        0.005,  // end-of-life: target-ring growth acceleration (ratio of S per s²) — object
+                            //   keeps orbiting while the ring widens, spiralling outward gradually
 
-  /* --- collision avoidance (improvement over original; wired in Phase 1) ---
+  /* --- collision avoidance ---
    * Objects softly push apart before touching, and near the center overlap is
    * fully prevented. Enforcement scales with closeness to center (continuous). */
   separationGap:       1.12,   // desired min center gap = (r1+r2) * gap (~12% space)
@@ -276,28 +272,25 @@ const TUNING = {
   volSmoothing:  0.10,      // one-pole volume smoothing coeff (Phase 4)
   volBandRatio:  80/320,    // distance band over which volume fades (Phase 4)
   sizeReactivity: 1.0,      // VU→size gain (Phase 5)
-  /* ripple (original RippleSprite): fired on loud beats, expands 4→96px over 2s, drawn INTO the
-     trail feedback (child of orbitNode→ballNode) so it smears like everything else */
+  /* ripple: fired on loud beats, expands outward over 2s, drawn INTO the
+     trail feedback so it smears like everything else */
   rippleThresh:    0.25,    // VU (vibe×vol) level that fires a ripple
   rippleDuration:  2.0,     // seconds to expand + fade
-  // Ripple size scales with the EMITTING DISC's rest radius (not the screen): the original
-  // grew 4→96px around a 28px ball (×0.14 → ×3.43 of the ball radius). Tying it to the disc
-  // keeps that proportion on any screen (disc size is clamped; the screen scale isn't).
-  // Dialled to 70% of that faithful size — the original read too large here.
+  // Ripple size scales with the EMITTING DISC's rest radius (not the screen), so the
+  // proportion holds on any screen (disc size is clamped; the screen scale isn't).
   rippleSrcScale:  (4 / 28) * 0.70,  // start radius, × disc rest radius
   rippleDestScale: (96 / 28) * 0.70, // end radius,   × disc rest radius
   // IMPORTANT: in a feedback loop the accumulation converges to the INK COLOUR — grey ink
   // can never build past its own grey, so ink colour + deposit alpha together set how dark
-  // the haze can get. These are deliberately SUBTLE deposits (softer than the original
-  // iOS values: ripple op 255→0, ring 64/255) — float16 keeps them smooth at any level.
-  rippleAlpha:     0.25,    // opacity envelope peak (×(1-easeOut) over rippleDuration)
-  rippleGrey:      0.4,     // ripple ink grey — orig RippleSprite colour 0x66/255
-  // centre sonar ping (OrbitSprite.insideOribit): a ring collapsing toward the centre logo
+  // the haze can get. These are deliberately SUBTLE deposits — float16 keeps them smooth at any level.
+  rippleAlpha:     0.15,    // opacity envelope peak (×(1-easeOut) over rippleDuration)
+  rippleGrey:      0.4,     // ripple ink grey level (0=black, 1=white)
+  // centre sonar ping: a ring collapsing toward the centre logo
   pingPeriod:      2.0,     // seconds per collapse cycle
-  pingGateRatio:   0.5,     // orig 160/320: fades in as an object nears the centre's orbit ring
-  pingAlpha:       0.02,    // max ring deposit; the stable ring accumulates in the feedback, so tiny
-  pingCollapseAlpha: 0.7,  // the inward-collapsing ping (object→centre) is this fraction of the ring's alpha
-  ringGreyBase:    0.2,     // ring ink flicker: grey = base + amp·cos(π·age) — orig (cos·0.2+0.2)
+  pingGateRatio:   0.5,     // fades in as an object nears the centre's orbit ring (ratio of S)
+  pingAlpha:       0.005,    // opacity of the orbit ring AND its collapsing ping — ONE value. The ring
+                            //   accumulates in the feedback while the ping moves, so the ping reads fainter.
+  ringGreyBase:    0.2,     // ring ink flicker: grey = base + amp·cos(π·age)
   ringGreyAmp:     0.2,
 
   /* --- lifespan (Phase 2) --- */
@@ -377,9 +370,9 @@ let logoSpinning = false, logoSpinStart = 0, logoAngle = 0;  // centre-logo rota
 /* ======== TRAIL RENDERER ========
  * WebGL2 with an RGBA16F accumulation buffer (float16 kills the 8-bit banding /
  * dither / stuck-residue artefacts of low-alpha Canvas-2D feedback), falling back
- * to the original Canvas-2D path when WebGL2 / EXT_color_buffer_float is missing
- * (or with ?trail=2d). Same architecture as the original iOS build: a single FBO
- * that is never cleared, faded each frame by a background-colour veil, with all
+ * to a Canvas-2D path when WebGL2 / EXT_color_buffer_float is missing
+ * (or with ?trail=2d). A single accumulation buffer that is never cleared,
+ * faded each frame by a background-colour veil, with all
  * sprites (ripples, orbit rings, discs, logo) stamped in on top. Rendering runs
  * at native rAF rate; deposits are dt-normalised (REF_FPS below is only the unit
  * convention for TUNING alpha values, NOT a frame cap).
@@ -389,7 +382,7 @@ let trailDpr = 1;
 let trailCtx = null;   // Canvas-2D fallback context (null while WebGL2 is active)
 let TGL = null;        // WebGL2 renderer state (null → 2D fallback)
 
-const REF_FPS = 25;    // original iOS frame rate — the unit in which deposit alphas are expressed
+const REF_FPS = 25;    // reference frame rate — the unit in which deposit alphas are expressed
 // fps-independent deposit: the per-frame alpha that accumulates to the same density
 // at any refresh rate as `a` did per frame at REF_FPS.
 function depositAlpha(a, dt) { return 1 - Math.pow(1 - clamp(0, a, 1), REF_FPS * dt); }
@@ -419,7 +412,7 @@ uniform float u_mask;    /* 1 = circular clip (disc images / grey loading circle
 uniform float u_feather; /* circular-mask AA width, uv units */
 in vec2 v_uv;
 out vec4 o;
-/* Analytic radial profile fitted to the original orbit.png (128px, measured):
+/* Analytic radial profile for the soft glow ring:
  * transparent centre → exponential rise → peak ~0.85 at r≈0.94 → soft outer edge.
  * Computed in float32 per-pixel, so it is resolution-independent and band-free. */
 const float RING_PEAK = 0.94;
@@ -639,8 +632,8 @@ function createAudioEl(earFile) {
   return a;
 }
 
-// Returns { analyser, gain }. The analyser taps the FULL-amplitude signal (so size reacts to
-// the real audio, not the attenuated playback volume); audible volume is set via the gain node.
+// Returns { analyser, gain, panner }. The analyser taps the FULL-amplitude signal (so size reacts
+// to the real audio); gain sets audible volume; panner places it left/right by screen position.
 function createAnalyser(audioEl) {
   try {
     const ctx = getAudioCtx();
@@ -655,8 +648,16 @@ function createAnalyser(audioEl) {
     gain.gain.value = 0;             // audible volume, set per frame from distance
     source.connect(analyser);        // full-amplitude tap for reactivity
     source.connect(gain);
-    gain.connect(ctx.destination);   // gain controls what you actually hear
-    return { analyser, gain };
+    // Stereo panning by horizontal position
+    let panner = null;
+    if (ctx.createStereoPanner) {
+      panner = ctx.createStereoPanner();
+      gain.connect(panner);
+      panner.connect(ctx.destination);
+    } else {
+      gain.connect(ctx.destination); // fallback: no panning on very old browsers
+    }
+    return { analyser, gain, panner };
   } catch(e) {
     console.warn('Could not create analyser:', e);
     return null;
@@ -670,11 +671,6 @@ function getAudibleVol(s) { return s.gain ? s.gain.gain.value : s.audioEl.volume
 /* ======== HELPERS ======== */
 function d2c(x, y, W, H) { return Math.hypot(x - W/2, y - H/2); }
 function easeOut3(t) { return 1 - Math.pow(1 - t, 3); }
-
-function getOrbitR() {
-  const S = layoutScale(appEl.clientWidth, appEl.clientHeight);
-  return S * TUNING.orbitRadiusRatio * (TUNING.orbitJitterBase + Math.random() * TUNING.orbitJitterRange);
-}
 
 /* ======== REMOVE ======== */
 function rmSound(uid) {
@@ -728,17 +724,18 @@ async function spawn(pairIdOverride) {
   const uid = uid_++;
   const W = appEl.clientWidth, H = appEl.clientHeight;
 
-  // Spawn placement: a random point on a ring around the center
-  const orbitR = getOrbitR();
-  const angle = Math.random() * Math.PI * 2;
-
   const cx = W / 2, cy = H / 2;
+  const S = layoutScale(W, H);                 // orbit/physics scale (leans toward the long edge)
+  const ringOffset = Math.random();            // per-object target-radius offset (so rings don't stack)
+
+  // Spawn AND grey-phase orbit at the object's eventual target ring, so reveal has no radial jump
+  const orbitR = (TUNING.centerOrbitRatio + ringOffset * TUNING.orbitJitter) * S;
+  const angle = Math.random() * Math.PI * 2;
   const initX = cx + orbitR * Math.cos(angle);
   const initY = cy + orbitR * Math.sin(angle);
 
-  // Disc diameter uses min(W,H) so discs stay sensible; drift uses the layout scale.
+  // Disc diameter uses min(W,H) so discs stay sensible
   const bsz = clamp(TUNING.objDiameterMin, TUNING.objDiameterRatio * Math.min(W, H), TUNING.objDiameterMax);
-  const S = layoutScale(W, H);   // for drift-acceleration magnitude below
 
   // Create DOM element
   const el = document.createElement('div');
@@ -753,8 +750,8 @@ async function spawn(pairIdOverride) {
   const img = document.createElement('img');
   img.src = ASSET_DIR + pair.eye;
   img.draggable = false;
-  const spinDur = 14.4;      // iOS: self.rotation -= 1 @25fps = 25°/s = 14.4s/turn, uniform for all discs
-  const spinDir = 'normal';  // one direction for all (matches the original)
+  const spinDur = 14.4;      // seconds per self-rotation (25°/s), uniform for all discs
+  const spinDir = 'normal';  // one rotation direction for all discs
   img.style.setProperty('--spin-dur', spinDur + 's');
   img.style.setProperty('--spin-dir', spinDir);
   el.appendChild(img);
@@ -769,6 +766,7 @@ async function spawn(pairIdOverride) {
   const audioNodes = createAnalyser(audioEl);
   const analyser = audioNodes ? audioNodes.analyser : null;
   const gain = audioNodes ? audioNodes.gain : null;
+  const panner = audioNodes ? audioNodes.panner : null;
   const analyserData = analyser ? new Uint8Array(analyser.frequencyBinCount) : null;
 
   const obj = {
@@ -781,11 +779,11 @@ async function spawn(pairIdOverride) {
     accX: Math.cos(angle) * TUNING.accInit * S,
     accY: Math.sin(angle) * TUNING.accInit * S,
     releaseVelocity: 1,
-    loadAngle: angle, loadRadius: orbitR,      // simple independent orbit while the grey circle loads
-    smVol: 0, gain,                            // smoothed volume + gain node (audible level)
+    ringOffset,                                // per-object target-radius offset (so rings don't stack)
+    loadAngle: angle, loadRadius: orbitR,      // grey-phase orbit radius = target ring (no reveal jump)
+    smVol: 0, gain, panner,                    // smoothed volume + gain (audible level) + stereo panner
     rippleStart: -1,                           // active ripple's start time (-1 = none)
-    ringA: 0,                                  // smoothed orbit-ring opacity (OrbitSprite IIR)
-    driftAngle: 0, driftRadius: 0, driftT: 0,  // spiral-out state (set when entering the drift phase)
+    ringA: 0,                                  // smoothed orbit-ring opacity
     throwVx: 0, throwVy: 0,
     // Disc spin (mirrors the CSS disc-spin animation, used for trail rotation)
     spinDur, spinDirSign: spinDir === 'reverse' ? -1 : 1,
@@ -823,8 +821,8 @@ function updateVibration(s) {
 }
 
 /* ======== ATTRACTION MODEL (potential-well + tangential satellite motion) ========
- * Ports the original BallSprite tick(): each live object is drawn toward a
- * target orbit RING around every attractor (the center ∞ and other objects),
+ * Each live object is drawn toward a target orbit RING around every attractor
+ * (the center ∞ and other objects),
  * then swept tangentially so it circles instead of colliding. Attraction from a
  * neighbour fades as that neighbour ages (vitality → newborns pull strongest).
  * All rates are per-second (dt-based) so behaviour is frame-rate independent.
@@ -859,9 +857,14 @@ function stepOrbit(s, dt, W, H, cx, cy, S, now) {
 
   let px = s.destX, py = s.destY;
   let accReduction = 1;
+  const ringOff = s.ringOffset * TUNING.orbitJitter;   // per-object radius offset (so rings don't stack)
+  // end-of-life: grow the target ring over time so the object keeps orbiting but spirals outward.
+  // Accelerating from 0 (0.5·g·t²) → gradual departure, no sudden loss of momentum.
+  const ageDrift = Math.max(0, (now - s.born - DRIFT_AT) / 1000);
+  const grow = 0.5 * TUNING.driftGrow * ageDrift * ageDrift;
 
-  // 1) attraction toward the center ∞ (always full vitality)
-  attractToward(px, py, cx, cy, TUNING.centerOrbitRatio * S, TUNING.centerAreaRatio * S, 1, s.releaseVelocity, dt, TUNING.gravityPull);
+  // 1) attraction toward the center ∞ (always full vitality); ring widens with age
+  attractToward(px, py, cx, cy, (TUNING.centerOrbitRatio + ringOff + grow) * S, TUNING.centerAreaRatio * S, 1, s.releaseVelocity, dt, TUNING.gravityPull);
   px = _att.x; py = _att.y; accReduction *= _att.invPow;
 
   // 2) attraction toward every other orbiting object — newborns pull hardest (vitality),
@@ -871,7 +874,7 @@ function stepOrbit(s, dt, W, H, cx, cy, S, now) {
     let vit = 1 - Math.min(1, ((now - o.born) / 1000) / TUNING.lifeSoft);
     vit = Math.pow(vit, TUNING.vitalityCurve);   // steeper so youth dominates
     attractToward(px, py, o.x + o.bsz / 2, o.y + o.bsz / 2,
-      TUNING.objOrbitRatio * S, TUNING.objAreaRatio * S, vit, s.releaseVelocity, dt, TUNING.objGravityPull);
+      (TUNING.objOrbitRatio + ringOff) * S, TUNING.objAreaRatio * S, vit, s.releaseVelocity, dt, TUNING.objGravityPull);
     px = _att.x; py = _att.y; accReduction *= _att.invPow;
   });
 
@@ -943,7 +946,7 @@ function separateHard(cx, cy, S) {
 }
 
 /* ======== TRAIL DRAWING ========
- * Frame-feedback motion blur like the original (MainLayer.m drawEffect): each frame the
+ * Frame-feedback motion blur: each frame the
  * accumulated buffer is faded toward the background by blurAmount/255, then the current
  * sprites are stamped in. blurAmount breathes 6..42 over 120s; both the fade and the
  * deposits are dt-scaled so the look converges the same at any refresh rate.
@@ -993,10 +996,10 @@ function drawTrailFrameGL(W, H, dt) {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   };
 
-  // 1) veil — fade the accumulation toward the background colour (original drawEffect)
+  // 1) veil — fade the accumulation toward the background colour
   sprite(null, cx, cy, W, H, 0, BG_R / 255, BG_G / 255, BG_B / 255, fadeAlpha, 1, 0, 0);
 
-  // 2) beat ripples — expand outward from each object (original RippleSprite).
+  // 2) beat ripples — expand outward from each object.
   // GREY ink at high opacity, never black at low opacity: the feedback accumulation
   // converges to the ink colour, so grey ink is what keeps the haze soft.
   const rg = TUNING.rippleGrey;
@@ -1005,14 +1008,14 @@ function drawTrailFrameGL(W, H, dt) {
     const t = (now - s.rippleStart) / 1000 / TUNING.rippleDuration;
     if (t >= 1) return;
     const e = easeOut3(t);
-    const restR = (s.bsz / 2) * TUNING.sizeRest;   // disc rest radius (staticRadius equivalent)
+    const restR = (s.bsz / 2) * TUNING.sizeRest;   // disc rest radius
     const rad = (TUNING.rippleSrcScale + (TUNING.rippleDestScale - TUNING.rippleSrcScale) * e) * restR;
     sprite(null, s.x + s.bsz / 2, s.y + s.bsz / 2, rad * 2, rad * 2, 0,
            rg, rg, rg, depositAlpha((1 - e) * TUNING.rippleAlpha, dt), 1, 0, 1);
   });
 
-  // 3) orbit ring + centre sonar ping (original OrbitSprite + its insideOribit):
-  // flickering grey ink, opacity IIR-smoothed like the original (+= (a-op)*0.2 @25fps)
+  // 3) orbit ring + centre sonar ping:
+  // flickering grey ink, opacity IIR-smoothed (+= (a-op)*0.2)
   const centerOrbit = TUNING.centerOrbitRatio * S;
   const gateR = TUNING.pingGateRatio * S;
   const ringIIR = 1 - Math.pow(0.8, REF_FPS * dt);
@@ -1025,9 +1028,9 @@ function drawTrailFrameGL(W, H, dt) {
     const a = depositAlpha(s.ringA, dt);
     const grey = clamp(0, TUNING.ringGreyBase + TUNING.ringGreyAmp * Math.cos((now - s.born) / 1000 * Math.PI), 1);
     const phase = (((now - s.born) / 1000) % TUNING.pingPeriod) / TUNING.pingPeriod;
-    sprite(null, cx, cy, dist * 2, dist * 2, 0, grey, grey, grey, a, 1, 0, 1);   // orbit ring
-    const pr = dist * (1 - phase);                                               // ping collapsing inward (object→centre)
-    sprite(null, cx, cy, pr * 2, pr * 2, 0, grey, grey, grey, a * TUNING.pingCollapseAlpha, 1, 0, 1);
+    sprite(null, cx, cy, dist * 2, dist * 2, 0, grey, grey, grey, a, 1, 0, 1);   // orbit ring (accumulates)
+    const pr = dist * (1 - phase);                                               // collapsing ping
+    sprite(null, cx, cy, pr * 2, pr * 2, 0, grey, grey, grey, a, 1, 0, 1);       // SAME opacity as the ring
   });
 
   // 4) discs (grey loading circle, then the revealed rotating image)
@@ -1086,7 +1089,7 @@ function drawTrailFrame2D(W, H, dt) {
 
   // Ripples/pings behind the discs (orbitNode z=0), drawn INTO the trail so they smear.
   // A radial gradient reproduces the orbit.png profile (transparent centre → bright rim at
-  // ~0.95 → soft edge falloff). GREY ink like the original — the feedback accumulation
+  // ~0.95 → soft edge falloff). GREY ink — the feedback accumulation
   // converges to the ink colour, so grey keeps the haze soft (black would go solid black).
   const glow = (px, py, rad, a, grey) => {
     if (a <= 0.002 || rad < 1) return;
@@ -1106,19 +1109,19 @@ function drawTrailFrame2D(W, H, dt) {
     trailCtx.fill();
   };
 
-  // (a) beat ripples — expand outward from each object (original RippleSprite)
+  // (a) beat ripples — expand outward from each object
   active.forEach(s => {
     if (s.rippleStart < 0) return;
     const t = (now - s.rippleStart) / 1000 / TUNING.rippleDuration;
     if (t >= 1) return;
     const e = easeOut3(t);
-    const restR = (s.bsz / 2) * TUNING.sizeRest;   // disc rest radius (staticRadius equivalent)
+    const restR = (s.bsz / 2) * TUNING.sizeRest;   // disc rest radius
     const rad = (TUNING.rippleSrcScale + (TUNING.rippleDestScale - TUNING.rippleSrcScale) * e) * restR;
     glow(s.x + s.bsz / 2, s.y + s.bsz / 2, rad, depositAlpha((1 - e) * TUNING.rippleAlpha, dt), TUNING.rippleGrey);
   });
 
-  // (b) orbit ring + centre sonar ping (original OrbitSprite + its insideOribit):
-  // flickering grey ink, opacity IIR-smoothed like the original (+= (a-op)*0.2 @25fps)
+  // (b) orbit ring + centre sonar ping:
+  // flickering grey ink, opacity IIR-smoothed (+= (a-op)*0.2)
   const centerOrbit = TUNING.centerOrbitRatio * S;
   const gateR = TUNING.pingGateRatio * S;
   const ringIIR = 1 - Math.pow(0.8, REF_FPS * dt);
@@ -1131,8 +1134,8 @@ function drawTrailFrame2D(W, H, dt) {
     const a = depositAlpha(s.ringA, dt);
     const grey = clamp(0, TUNING.ringGreyBase + TUNING.ringGreyAmp * Math.cos((now - s.born) / 1000 * Math.PI), 1);
     const phase = (((now - s.born) / 1000) % TUNING.pingPeriod) / TUNING.pingPeriod;
-    glow(cx, cy, dist, a, grey);                            // orbit ring (rim reaches the object)
-    glow(cx, cy, dist * (1 - phase), a * TUNING.pingCollapseAlpha, grey);  // ping collapsing toward the centre (object→centre)
+    glow(cx, cy, dist, a, grey);                            // orbit ring (accumulates)
+    glow(cx, cy, dist * (1 - phase), a, grey);              // collapsing ping — SAME opacity as the ring
   });
   trailCtx.globalAlpha = 1;
 
@@ -1142,7 +1145,7 @@ function drawTrailFrame2D(W, H, dt) {
     if (r < 1) return;
     const cx = s.x + s.bsz / 2;
     const cy = s.y + s.bsz / 2;
-    const op = s._opacity || 0;                 // burn in at the disc's true opacity (like the original sprites)
+    const op = s._opacity || 0;                 // burn in at the disc's true opacity
 
     // Grey loading circle: still contributes to the screen-wide blur/trail (as a grey disc)
     if (!s.revealStart) {
@@ -1189,24 +1192,27 @@ function drawTrailFrame2D(W, H, dt) {
 }
 
 /* ======== VOLUME + OPACITY + TRANSFORM (shared by every live phase) ========
- * Faithful to the original Ball.m: volume is one-pole smoothed (momentum), and size is
- * radius = staticRadius*(1 + vu) with vu = audio power × volume — so it reacts to the sound
+ * Volume is one-pole smoothed (momentum), and size is
+ * radius = sizeRest*(1 + vu) with vu = audio loudness × volume — so it reacts to the sound
  * and grows near the centre (louder). revealE: 0 while the grey circle loads → 1 when shown.
  */
 function applyVolumeAndTransform(s, W, H, maxD, vibe, revealE, now, dt) {
   const dist = d2c(s.x + s.bsz/2, s.y + s.bsz/2, W, H);
   const target = Math.max(0, 1 - dist / maxD);
-  // one-pole smoothing on volume (original: player.volume += (vol - volume)*0.1), frame-rate independent
+  // one-pole smoothing on volume, frame-rate independent
   s.smVol += (target - s.smVol) * (1 - Math.pow(1 - TUNING.volSmoothing, dt * 25));
   const vol = s.smVol;
   // silent while the grey circle loads; fades in with the reveal (via the gain node)
   setAudibleVol(s, vol * vol * TUNING.volumeGain * revealE);
 
-  // size = staticRadius*(1 + vu), vu = audio power (vibe) × volume — reacts to the playing sound
+  // stereo pan by horizontal position
+  if (s.panner) s.panner.pan.value = clamp(-1, ((s.x + s.bsz / 2) - W / 2) / (W / 2) * TUNING.panRange, 1);
+
+  // size = sizeRest*(1 + vu), vu = audio loudness (vibe) × volume — reacts to the playing sound
   const vu = vibe * vol;
   const fullScale = TUNING.sizeRest * (1 + vu * TUNING.sizeAudioGain);
 
-  // fire a ripple on a loud beat once the previous one has finished (original: vu>0.25 && ripple.isDead)
+  // fire a ripple on a loud beat once the previous one has finished
   if (revealE > 0 && vu > TUNING.rippleThresh &&
       (s.rippleStart < 0 || (now - s.rippleStart) / 1000 > TUNING.rippleDuration)) {
     s.rippleStart = now;
@@ -1324,41 +1330,12 @@ function animate(time) {
 
       applyVolumeAndTransform(s, W, H, maxD, vibe, revealE, now, dt);
 
+      // Aged: the target ring grows over time (inside stepOrbit), so the object keeps ORBITING
+      // while spiralling outward — no separate "dead" drift, rotational momentum preserved.
+      // Remove only once it's fully beyond the farthest corner.
       if (!frozen && age > DRIFT_AT) {
-        // Aged out: spiral outward — keep the orbital rotation, grow the radius gradually
-        s.phase = 'drift';
-        const ddx = s.x + s.bsz/2 - cx, ddy = s.y + s.bsz/2 - cy;
-        s.driftRadius = Math.hypot(ddx, ddy) || 1;
-        s.driftAngle = Math.atan2(ddy, ddx);
-        s.driftT = 0;
-      }
-      return;
-    }
-
-    /* ---- DRIFT (spiral outward: keep rotating, radius grows) ---- */
-    if (s.phase === 'drift') {
-      if (frozen) {
-        // Frozen: resume orbiting in place
-        s.phase = 'orbit';
-        s.releaseVelocity = 0;
-        s.accX = 0; s.accY = 0;
-        s.destX = s.x + s.bsz/2; s.destY = s.y + s.bsz/2;
-        return;
-      }
-      s.driftT += dt;
-      const dr = Math.min(1, s.driftT / DRIFT_RAMP_S);
-      const ramp = dr * dr * (3 - 2 * dr);                            // ease the outward speed in from 0
-      s.driftAngle += (TUNING.tangentialSpeed * Math.PI / 180) * dt;  // rotation stays continuous
-      s.driftRadius += TUNING.driftSpeed * S * ramp * dt;             // outward drift eases in (no sudden release)
-      s.x = cx + s.driftRadius * Math.cos(s.driftAngle) - s.bsz/2;
-      s.y = cy + s.driftRadius * Math.sin(s.driftAngle) - s.bsz/2;
-
-      applyVolumeAndTransform(s, W, H, maxD, vibe, revealE, now, dt);
-
-      // Natural motion: keep spiralling even while off-screen — it can weave back into view.
-      // Remove only once the whole orbit is beyond the farthest corner (can never return).
-      if (s.driftRadius > maxD + s.bsz) {
-        toRemove.push(uid);
+        const dd = Math.hypot(s.x + s.bsz/2 - cx, s.y + s.bsz/2 - cy);
+        if (dd > maxD + s.bsz) toRemove.push(uid);
       }
       return;
     }
@@ -1500,7 +1477,6 @@ function togFreeze() {
     clearTimeout(nxtTimer);
   } else {
     // Lifespan pauses while frozen: shift each object's birth forward by the frozen duration
-    // (original: life only accrues when totalMovement == 1)
     const frozenDur = Date.now() - freezeStartT;
     active.forEach(o => { o.born += frozenDur; });
     appEl.classList.remove('frozen');
