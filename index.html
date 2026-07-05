@@ -188,6 +188,7 @@ const GRAY_FADE_MS = 250;   // ms for the grey loading circle to fade in on birt
 const LOGO_INTRO_MS = 1150; // ms for the title logo to shrink to centre before the first spawn (also drives the CSS transition via --intro-dur)
 const SPAWN_INTERVAL_MS   = 7000;  // min gap between object spawns (was 4500)
 const SPAWN_INTERVAL_RAND = 5000;  // + random up to this (→ 7–12s spacing)
+const REFILL_MS           = 300;   // when the screen is empty, spawn again almost immediately
 const LOGO_SPIN_DEGPS = 22.5; // steady centre-logo rotation speed (deg/s ≈ 16s per turn)
 const LOGO_RAMP_S = 0.5;      // seconds to ease the logo rotation from 0 up to full speed
 const DISC_SPIN_S = 14.4;    // seconds per disc self-rotation (25°/s), uniform for all discs — also drives the CSS via --spin-dur
@@ -1062,7 +1063,6 @@ function drawTrailFrameGL(W, H, dt) {
 
   // 4) discs (grey loading circle, then the revealed rotating image)
   active.forEach(s => {
-    if (s.phase === 'dragging') return;
     const r = (s.bsz / 2) * (s._scale || 0);   // current rendered radius (set in applyVolumeAndTransform)
     if (r < 1) return;
     const dcx = s.x + s.bsz / 2;
@@ -1167,7 +1167,6 @@ function drawTrailFrame2D(W, H, dt) {
   trailCtx.globalAlpha = 1;
 
   active.forEach(s => {
-    if (s.phase === 'dragging') return;
     const r = (s.bsz / 2) * (s._scale || 0);   // current rendered size (set in applyVolumeAndTransform)
     if (r < 1) return;
     const cx = s.x + s.bsz / 2;
@@ -1395,7 +1394,10 @@ function animate(time) {
   // Hard non-overlap backstop near the center (after all positions settle)
   if (!frozen) separateHard(cx, cy, S);
 
-  toRemove.forEach(uid => rmSound(uid));
+  if (toRemove.length) {
+    toRemove.forEach(uid => rmSound(uid));
+    if (active.size === 0 && !frozen) schedNext();   // screen just emptied → refill soon (REFILL_MS)
+  }
   drawTrailFrame(W, H, dt);
 }
 
@@ -1407,10 +1409,13 @@ function updCount() {
 /* ======== STREAMING ======== */
 function schedNext() {
   if (frozen) return;
+  clearTimeout(nxtTimer);
+  // empty screen → refill almost immediately; otherwise the normal 7–12s spacing
+  const delay = active.size === 0 ? REFILL_MS : SPAWN_INTERVAL_MS + Math.random() * SPAWN_INTERVAL_RAND;
   nxtTimer = setTimeout(() => {
     if (!frozen && active.size < MAX) spawn();
     schedNext();
-  }, SPAWN_INTERVAL_MS + Math.random() * SPAWN_INTERVAL_RAND);
+  }, delay);
 }
 
 /* ======== POINTER ======== */
