@@ -30,7 +30,7 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 /* Scaler shrinks from title size to centre size on start */
 #infinity-scaler{transition:transform 1.1s ease-in-out}
 #infinity-scaler.intro{transform:scale(2.7)}
-#infinity-logo{width:min(22vw,22vh);height:auto;pointer-events:none;transition:filter .4s;will-change:transform}
+#infinity-logo{width:200px;height:auto;pointer-events:none;transition:filter .4s;will-change:transform}
 #infinity-wrap.frozen{filter:drop-shadow(0 0 16px rgba(70,130,255,.5)) drop-shadow(0 0 36px rgba(70,130,255,.25))}
 #infinity-wrap.frozen #infinity-logo{filter:brightness(1.2) saturate(1.4)}
 
@@ -227,6 +227,11 @@ const TUNING = {
   objDiameterMin:   105,
   objDiameterMax:   150,
 
+  /* --- centre logo size (px, clamped) — driven live each frame --- */
+  logoRatio:        0.22,   // logo width = ratio * layoutScale(W,H)
+  logoMin:          96,     // px floor (tiny windows)
+  logoMax:          200,    // px cap — reached on medium+ windows so both orientations match
+
   /* --- spawn orbit placement (ratios of S) --- */
 
   /* --- audio→visual response (unitless) --- */
@@ -308,6 +313,19 @@ function clamp(min, v, max) { return v < min ? min : v > max ? max : v; }
 function layoutScale(W, H) {
   const lo = Math.min(W, H), hi = Math.max(W, H);
   return lo + (hi - lo) * TUNING.aspectSpread;
+}
+
+/* disc box diameter (px) and centre-logo width (px). Both scale off the SAME layout
+ * scale S as the orbits, so the whole composition (orbits + disc + logo) stays in the
+ * same proportion at any window shape — the size feel is consistent between landscape
+ * and portrait, not just tied to the short edge. Live-tunable via TUNING. */
+function objDiameter(W, H) {
+  const S = layoutScale(W, H);
+  return clamp(TUNING.objDiameterMin, TUNING.objDiameterRatio * S, TUNING.objDiameterMax);
+}
+function logoWidth(W, H) {
+  const S = layoutScale(W, H);
+  return clamp(TUNING.logoMin, TUNING.logoRatio * S, TUNING.logoMax);
 }
 
 // Expose for live tuning from the devtools console, e.g. TUNING.objDiameterRatio = 0.22
@@ -763,8 +781,8 @@ async function spawn(pairIdOverride) {
   const initX = cx + orbitR * Math.cos(angle);
   const initY = cy + orbitR * Math.sin(angle);
 
-  // Disc diameter uses min(W,H) so discs stay sensible
-  const bsz = clamp(TUNING.objDiameterMin, TUNING.objDiameterRatio * Math.min(W, H), TUNING.objDiameterMax);
+  // Disc diameter uses min(W,H) so discs stay sensible (live-tunable; re-applied each frame)
+  const bsz = objDiameter(W, H);
 
   // Create DOM element
   const el = document.createElement('div');
@@ -1235,7 +1253,12 @@ function applyVolumeAndTransform(s, W, H, maxD, vibe, revealE, now, dt) {
   setAudibleVol(s, vol * vol * TUNING.volumeGain * revealE);
 
   // stereo pan by horizontal position
-  if (s.panner) s.panner.pan.value = clamp(-1, ((s.x + s.bsz / 2) - W / 2) / (W / 2) * TUNING.panRange, 1);
+  // normalise by the short edge (min(W,H)/2), not the full width, so panning stays as
+  // strong on wide/landscape windows as on portrait (objects only span the orbit region)
+  if (s.panner) {
+    const offX = (s.x + s.bsz / 2) - W / 2;
+    s.panner.pan.value = clamp(-1, offX / (Math.min(W, H) / 2) * TUNING.panRange, 1);
+  }
 
   // size = sizeRest*(1 + vu), vu = audio loudness (vibe) × volume — reacts to the playing sound
   const vu = vibe * vol;
@@ -1259,6 +1282,22 @@ function applyVolumeAndTransform(s, W, H, maxD, vibe, revealE, now, dt) {
   return vol;
 }
 
+/* Apply live disc/logo sizes each frame so TUNING edits (and resize) take effect at once.
+ * Discs resize about their centre so position and physics are unaffected. */
+let _lastLogoW = -1;
+function updateSizes(W, H) {
+  const lw = logoWidth(W, H);
+  if (lw !== _lastLogoW) { infinityLogo.style.width = lw + 'px'; _lastLogoW = lw; }
+  const d = objDiameter(W, H);
+  active.forEach(s => {
+    if (Math.abs(d - s.bsz) < 0.5) return;
+    const ccx = s.x + s.bsz / 2, ccy = s.y + s.bsz / 2;   // keep the disc centre fixed
+    s.bsz = d;
+    s.x = ccx - d / 2; s.y = ccy - d / 2;
+    s.el.style.width = s.el.style.height = d + 'px';
+  });
+}
+
 /* ======== ANIMATION LOOP ======== */
 function animate(time) {
   requestAnimationFrame(animate);
@@ -1274,6 +1313,8 @@ function animate(time) {
   const maxD = Math.hypot(cx, cy);
   const now = Date.now();
   const toRemove = [];
+
+  updateSizes(W, H);   // live disc/logo sizing (responds to TUNING + resize)
 
   // Centre logo rotation — eases up from 0 to full speed (smoothstep) so it doesn't snap on
   if (logoSpinning) {
