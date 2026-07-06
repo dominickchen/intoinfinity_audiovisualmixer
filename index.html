@@ -241,7 +241,7 @@ const TUNING = {
   posLerp:          0.07,   // position ease toward target — lower = floatier lag
   damping:          0.25,   // fraction of drift acceleration retained per second
   captureRate:      0.6,    // rate/s easing an object toward its target orbit ring
-  tangentialSpeed:  14,     // deg/second orbital spin (satellite rotation) — lower = slower, floatier
+  tangentialSpeed:  19,     // deg/second orbital spin (satellite rotation) — lower = slower, floatier
   centerOrbitRatio: 0.25,   // target ring radius around the center ∞ (ratio of S)
   objOrbitRatio:    0.17,   // target ring radius around another object (ratio of S)
   orbitJitter:      0.06,   // per-object target-radius offset (ratio of S) so objects don't stack on the
@@ -276,7 +276,7 @@ const TUNING = {
   // Ripple size scales with the EMITTING DISC's rest radius (not the screen), so the
   // proportion holds on any screen (disc size is clamped; the screen scale isn't).
   rippleSrcScale:  0.10,    // start radius, × disc rest radius
-  rippleDestScale: 2.40,    // end radius,   × disc rest radius
+  rippleDestScale: 2.80,    // end radius,   × disc rest radius
   // IMPORTANT: in a feedback loop the accumulation converges to the INK COLOUR — grey ink
   // can never build past its own grey, so ink colour + deposit alpha together set how dark
   // the haze can get. These are deliberately SUBTLE deposits — float16 keeps them smooth at any level.
