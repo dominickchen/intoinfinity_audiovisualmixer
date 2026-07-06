@@ -183,17 +183,17 @@ if ('serviceWorker' in navigator) {
 /* ======== CONSTANTS ======== */
 let   TOTAL = 157;          // pair count — re-derived from PAIRS.length after load
 const MAX   = 4;            // max simultaneous sounds
-const DRIFT_AT  = 48000;    // ms of life before an object starts drifting outward
+const DRIFT_AT  = 64000;    // ms of life before an object starts drifting outward
 const LOAD_MIN_MS  = 3000;  // min time the grey loading circle shows (even when cached)
 const REVEAL_DUR   = 700;   // ms to expand + fade from grey circle to the image
 const GRAY_FADE_MS = 250;   // ms for the grey loading circle to fade in on birth
 const LOGO_INTRO_MS = 1150; // ms for the title logo to shrink to centre before the first spawn (also drives the CSS transition via --intro-dur)
-const SPAWN_INTERVAL_MS   = 7000;  // min gap between object spawns (was 4500)
-const SPAWN_INTERVAL_RAND = 5000;  // + random up to this (→ 7–12s spacing)
-const REFILL_MS           = 300;   // when the screen is empty, spawn again almost immediately
+const SPAWN_INTERVAL_MS   = DRIFT_AT / MAX - 2000; // base gap: fill the MAX slots over ~one lifespan (auto-syncs with DRIFT_AT)
+const SPAWN_INTERVAL_RAND = SPAWN_INTERVAL_MS * 0.4; // + up to 40% jitter (→ ~16–22s spacing at a 64s lifespan)
+const REFILL_MS           = 1000; // when the screen is empty, spawn again almost immediately
 const LOGO_SPIN_DEGPS = 22.5; // steady centre-logo rotation speed (deg/s ≈ 16s per turn)
-const LOGO_RAMP_S = 0.5;      // seconds to ease the logo rotation from 0 up to full speed
-const DISC_SPIN_S = 14.4;    // seconds per disc self-rotation (25°/s), uniform for all discs — also drives the CSS via --spin-dur
+const LOGO_RAMP_S = 0.5;    // seconds to ease the logo rotation from 0 up to full speed
+const DISC_SPIN_S = 14.4;   // seconds per disc self-rotation (25°/s), uniform for all discs — also drives the CSS via --spin-dur
 // Trail blur: blurAmount = BLUR_BASE + BLUR_AMP*cos(t/PERIOD*2π), applied as a per-frame fade of the accumulation
 const BLUR_BASE = 24, BLUR_AMP = 18, BLUR_PERIOD_S = 120; // breathes 6..42 over 120s
 const TRAIL_MIN_FADE = 0.05;  // Canvas-2D fallback only: floor on per-frame fade so faint trails clear (8-bit residue). The WebGL float16 path needs no floor.
@@ -291,7 +291,7 @@ const TUNING = {
   ringGreyAmp:     0.2,
 
   /* --- lifespan --- */
-  lifeSoft: 64              // youth window (s): a neighbour's attraction weakens as it ages past this
+  lifeSoft: 72              // youth window (s): a neighbour's attraction weakens as it ages past this
 };
 
 /* clamp helper */
