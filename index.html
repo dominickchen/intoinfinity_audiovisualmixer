@@ -98,8 +98,11 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 /* Detail modal — counter-invert when frozen so image/text show true colours */
 #detail-modal{background:rgba(0,0,0,.35)}
 #app.frozen #detail-modal{filter:invert(1)}
+/* Detail modal open: freeze the background disc spin so the backdrop is static and the
+   full-screen backdrop-filter blur can be cached instead of re-blurred every frame. */
+#app.detail-open .sound-circle img{animation-play-state:paused}
 #detail-modal .detail-content{display:flex;flex-direction:column;align-items:center;cursor:pointer;padding:20px}
-#detail-modal .detail-img{width:min(52vw,52vh);height:min(52vw,52vh);border-radius:50%;object-fit:cover;box-shadow:0 8px 40px rgba(0,0,0,.2);margin-bottom:20px;animation:disc-spin var(--spin-dur,14.4s) linear infinite}
+#detail-modal .detail-img{width:min(52vw,52vh);height:min(52vw,52vh);border-radius:50%;object-fit:cover;box-shadow:0 8px 40px rgba(0,0,0,.2);margin-bottom:20px;animation:disc-spin var(--spin-dur,14.4s) linear infinite;will-change:transform}
 #detail-modal .detail-info{text-align:center;color:rgba(255,255,255,.88)}
 #detail-modal .detail-info p{font-size:.78rem;line-height:1.9;letter-spacing:.04em;font-weight:300}
 #detail-modal .detail-info .label{font-size:.55rem;color:rgba(255,255,255,.45);letter-spacing:.1em;text-transform:uppercase;margin-bottom:2px}
@@ -1544,6 +1547,7 @@ function onUp() {
 
 /* ======== FREEZE ======== */
 let freezeStartT = 0;
+let detailStartT = 0;   // when the detail modal opened (to rewind aging on close)
 function togFreeze() {
   frozen = !frozen;
   const w = document.getElementById('infinity-wrap');
@@ -1572,6 +1576,9 @@ function togFreeze() {
 function openDetail(s) {
   detailTarget = s;
   lastT = 0;
+  appEl.classList.add('detail-open');   // pause background disc spin → static backdrop (cheap blur)
+  detailStartT = Date.now();            // pause aging + spawning while the modal is open (like freeze)
+  clearTimeout(nxtTimer);
 
   active.forEach(o => {
     if (o.uid === s.uid) {
@@ -1614,7 +1621,14 @@ function closeDetail() {
       delete o._savedVol;
     }
   });
+  // rewind aging by the time the modal was open (skip if frozen — freeze already accounts for it)
+  if (!frozen) {
+    const d = Date.now() - detailStartT;
+    active.forEach(o => { o.born += d; });
+    schedNext();   // resume spawning
+  }
   detailTarget = null;
+  appEl.classList.remove('detail-open');
   closeModal('detail-modal');
 }
 
