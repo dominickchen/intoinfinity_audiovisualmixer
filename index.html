@@ -392,6 +392,10 @@ const REF_FPS = 25;    // reference frame rate — the unit in which deposit alp
 // fps-independent deposit: the per-frame alpha that accumulates to the same density
 // at any refresh rate as `a` did per frame at REF_FPS.
 function depositAlpha(a, dt) { return 1 - Math.pow(1 - clamp(0, a, 1), REF_FPS * dt); }
+// Sub-frame trail supersampling: stamp a fast-moving disc several times along its
+// prev→current path within one frame so the blur streak stays continuous at any speed.
+const TRAIL_SUBSTEP_PX  = 0.25;  // max gap between stamps, as a fraction of the disc radius
+const TRAIL_SUBSTEP_MAX = 16;    // cap on substeps per disc per frame
 
 const TRAIL_VS = `#version 300 es
 layout(location=0) in vec2 a_uv;
@@ -802,6 +806,7 @@ async function spawn(pairIdOverride) {
     el, audioEl, pairId, pair,
     born: Date.now(), bsz, uid,
     x: initX - bsz/2, y: initY - bsz/2,
+    _tpx: initX, _tpy: initY, _tpr: 0,  // previous trail-stamp centre + radius (sub-frame supersampling)
     phase: 'orbit',           // orbit | dragging | thrown
     // Attraction model: target center-position + drift accel + throw recapture ramp
     destX: initX, destY: initY,
@@ -1060,26 +1065,40 @@ function drawTrailFrameGL(W, H, dt) {
     sprite(null, cx, cy, pr * 2, pr * 2, 0, grey, grey, grey, a, 1, 0, 1);       // SAME opacity as the ring
   });
 
-  // 4) discs (grey loading circle, then the revealed rotating image)
+  // 4) discs (grey loading circle, then the revealed rotating image).
+  // Sub-frame supersampling: stamp N times along prev→current (interpolating both centre AND
+  // radius) so both fast travel and fast audio breathing stay a continuous streak. N deposits
+  // of depositAlpha(a, dt/N) equal one of depositAlpha(a, dt), so brightness is unchanged — only
+  // the gap is filled. N is the minimal count that keeps every step under ~¼ radius (always
+  // smooth; N=1 only when the frame-to-frame change is imperceptible).
   active.forEach(s => {
+    const dcx = s.x + s.bsz / 2, dcy = s.y + s.bsz / 2;
     const r = (s.bsz / 2) * (s._scale || 0);   // current rendered radius (set in applyVolumeAndTransform)
-    if (r < 1) return;
-    const dcx = s.x + s.bsz / 2;
-    const dcy = s.y + s.bsz / 2;
-    const op = depositAlpha(s._opacity || 0, dt);
+    if (r < 1) { s._tpx = dcx; s._tpy = dcy; s._tpr = r; return; }
 
-    if (!s.revealStart) {
-      sprite(null, dcx, dcy, r * 2, r * 2, 0, 0xc2 / 255, 0xc2 / 255, 0xc2 / 255, op, 1, 1, 0);
-      return;
+    // resolve texture / rotation / tint once (spin is slow → constant across substeps)
+    let tex = null, rot = 0, tint = 0xc2 / 255, tintMix = 1;   // default = grey loading circle
+    if (s.revealStart) {
+      if (!s.glTex) {   // lazy upload — usually during the grey phase, before reveal
+        const img = s.el.querySelector('img');
+        if (img && img.complete && img.naturalWidth) s.glTex = glUploadTexture(img, true);
+      }
+      if (!s.glTex) { s._tpx = dcx; s._tpy = dcy; s._tpr = r; return; }   // not ready — advance, skip
+      tex = s.glTex;
+      rot = -(((now - s.born) / 1000 / DISC_SPIN_S) % 1) * Math.PI * 2;   // CCW, matching the logo
+      tint = 0; tintMix = 0;
     }
-    if (!s.glTex) {   // lazy upload — usually happens during the grey phase, before reveal
-      const img = s.el.querySelector('img');
-      if (img && img.complete && img.naturalWidth) s.glTex = glUploadTexture(img, true);
-      if (!s.glTex) return;
+
+    const prevR = s._tpr || r;
+    const change = Math.max(Math.hypot(dcx - s._tpx, dcy - s._tpy), Math.abs(r - prevR));
+    const N = Math.max(1, Math.min(TRAIL_SUBSTEP_MAX, Math.ceil(change / (r * TRAIL_SUBSTEP_PX))));
+    const subOp = depositAlpha(s._opacity || 0, dt / N);
+    for (let i = 1; i <= N; i++) {
+      const t = i / N, rr = prevR + (r - prevR) * t;   // interpolate centre + radius
+      sprite(tex, s._tpx + (dcx - s._tpx) * t, s._tpy + (dcy - s._tpy) * t,
+             rr * 2, rr * 2, rot, tint, tint, tint, subOp, tintMix, 1, 0);
     }
-    const frac = ((now - s.born) / 1000 / DISC_SPIN_S) % 1;
-    const rot = -frac * Math.PI * 2;   // counter-clockwise, matching the centre logo
-    sprite(s.glTex, dcx, dcy, r * 2, r * 2, rot, 0, 0, 0, op, 0, 1, 0);
+    s._tpx = dcx; s._tpy = dcy; s._tpr = r;
   });
 
   // 5) centre ∞ logo also feeds the trail (rotating smear)
@@ -1165,41 +1184,48 @@ function drawTrailFrame2D(W, H, dt) {
   });
   trailCtx.globalAlpha = 1;
 
+  // Sub-frame supersampling (same idea as the GL path): stamp N times along prev→current,
+  // interpolating centre AND radius, so fast travel and fast breathing stay a continuous streak.
+  // Split opacity so N source-over draws at the same spot compose back to the disc's true
+  // opacity (1-(1-op)^N === op ⇒ subOp=1-(1-op)^(1/N)).
   active.forEach(s => {
+    const dcx = s.x + s.bsz / 2, dcy = s.y + s.bsz / 2;
     const r = (s.bsz / 2) * (s._scale || 0);   // current rendered size (set in applyVolumeAndTransform)
-    if (r < 1) return;
-    const cx = s.x + s.bsz / 2;
-    const cy = s.y + s.bsz / 2;
+    if (r < 1) { s._tpx = dcx; s._tpy = dcy; s._tpr = r; return; }
     const op = s._opacity || 0;                 // burn in at the disc's true opacity
 
-    // Grey loading circle: still contributes to the screen-wide blur/trail (as a grey disc)
-    if (!s.revealStart) {
-      trailCtx.save();
-      trailCtx.globalAlpha = op;
-      trailCtx.fillStyle = '#c2c2c2';
-      trailCtx.beginPath();
-      trailCtx.arc(cx, cy, r, 0, Math.PI * 2);
-      trailCtx.fill();
-      trailCtx.restore();
-      return;
+    let img = null, rot = 0;   // null img = grey loading circle
+    if (s.revealStart) {
+      img = s.el.querySelector('img');
+      if (!img || !img.complete || !img.naturalWidth) { s._tpx = dcx; s._tpy = dcy; s._tpr = r; return; }
+      rot = -(((now - s.born) / 1000 / DISC_SPIN_S) % 1) * Math.PI * 2;   // CCW, matching the logo
     }
 
-    const img = s.el.querySelector('img');
-    if (!img || !img.complete || !img.naturalWidth) return;
-
-    // Rotation from elapsed time × spin speed (mirrors the CSS disc-spin animation)
-    const frac = ((now - s.born) / 1000 / DISC_SPIN_S) % 1;
-    const rot = -frac * Math.PI * 2;   // counter-clockwise, matching the centre logo
-
-    trailCtx.save();
-    trailCtx.globalAlpha = op;
-    trailCtx.translate(cx, cy);
-    trailCtx.rotate(rot);
-    trailCtx.beginPath();
-    trailCtx.arc(0, 0, r, 0, Math.PI * 2);
-    trailCtx.clip();
-    trailCtx.drawImage(img, -r, -r, r * 2, r * 2);
-    trailCtx.restore();
+    const prevR = s._tpr || r;
+    const change = Math.max(Math.hypot(dcx - s._tpx, dcy - s._tpy), Math.abs(r - prevR));
+    const N = Math.max(1, Math.min(TRAIL_SUBSTEP_MAX, Math.ceil(change / (r * TRAIL_SUBSTEP_PX))));
+    const subOp = N > 1 ? 1 - Math.pow(1 - op, 1 / N) : op;
+    for (let i = 1; i <= N; i++) {
+      const t = i / N, rr = prevR + (r - prevR) * t;
+      const px = s._tpx + (dcx - s._tpx) * t, py = s._tpy + (dcy - s._tpy) * t;
+      trailCtx.save();
+      trailCtx.globalAlpha = subOp;
+      trailCtx.translate(px, py);
+      if (img) {
+        trailCtx.rotate(rot);
+        trailCtx.beginPath();
+        trailCtx.arc(0, 0, rr, 0, Math.PI * 2);
+        trailCtx.clip();
+        trailCtx.drawImage(img, -rr, -rr, rr * 2, rr * 2);
+      } else {
+        trailCtx.fillStyle = '#c2c2c2';
+        trailCtx.beginPath();
+        trailCtx.arc(0, 0, rr, 0, Math.PI * 2);
+        trailCtx.fill();
+      }
+      trailCtx.restore();
+    }
+    s._tpx = dcx; s._tpy = dcy; s._tpr = r;
   });
 
   // Centre ∞ logo also feeds the trail/blur (rotating smear)
