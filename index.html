@@ -214,15 +214,11 @@ const TUNING = {
   aspectSpread:     0.6,    // orbit/physics scale leans from min(W,H) toward max(W,H): 0=square-fit, 1=full.
                             //   >0 lets orbits spill past the short edge on tall/wide screens (less cramped)
 
-  /* --- object size (px, clamped) — uses min(W,H) so discs stay sensible --- */
-  objDiameterRatio: 0.17,   // disc diameter = clamp(min, ratio*minWH, max)
-  objDiameterMin:   105,
-  objDiameterMax:   150,
-
-  /* --- centre logo size — JS (logoWidth) is the single source of truth; CSS only a no-JS fallback --- */
-  logoRatio:        0.22,   // resting logo width = ratio * min(W,H)  (short edge → always fits portrait width)
-  logoMax:          200,    // px cap so it doesn't get huge on large screens
-  logoIntroScale:   3.2,    // title logo = resting size × this; the intro shrinks from ×this to ×1
+  /* --- object + logo size — screen-relative, one source; the whole composition scales together.
+   *     JS (objDiameter/logoWidth) is authoritative; the CSS logo width is only a no-JS fallback. --- */
+  objDiameterRatio: 0.16,   // disc diameter = ratio × layoutScale(W,H)  (grows with the screen)
+  logoScale:        1.33,   // centre logo width = disc diameter × this  (logo follows the discs)
+  logoIntroScale:   3.2,    // title magnification: title = resting logo × this, clamped to fit the viewport
 
   /* --- spawn orbit placement (ratios of S) --- */
 
@@ -310,11 +306,10 @@ function layoutScale(W, H) {
  * SHORT edge min(W,H) with a px cap, so it always fits the width in portrait and never
  * balloons on wide/landscape windows. */
 function objDiameter(W, H) {
-  const S = layoutScale(W, H);
-  return clamp(TUNING.objDiameterMin, TUNING.objDiameterRatio * S, TUNING.objDiameterMax);
+  return TUNING.objDiameterRatio * layoutScale(W, H);   // screen-relative, no clamp
 }
 function logoWidth(W, H) {
-  return Math.min(TUNING.logoRatio * Math.min(W, H), TUNING.logoMax);
+  return objDiameter(W, H) * TUNING.logoScale;          // logo follows the disc size
 }
 
 // Expose for live tuning from the devtools console, e.g. TUNING.objDiameterRatio = 0.22
@@ -1294,7 +1289,13 @@ function applyVolumeAndTransform(s, W, H, maxD, vibe, revealE, now, dt) {
 let _lastLogoW = -1;
 function updateSizes(W, H) {
   const lw = logoWidth(W, H);
-  if (lw !== _lastLogoW) { infinityLogo.style.width = lw + 'px'; _lastLogoW = lw; }
+  if (lw !== _lastLogoW) {
+    infinityLogo.style.width = lw + 'px';
+    // title = resting logo × logoIntroScale, but clamped so the enlarged title fits the viewport
+    const introScale = Math.min(TUNING.logoIntroScale, 0.85 * Math.min(W, H) / lw);
+    document.documentElement.style.setProperty('--intro-scale', introScale.toFixed(3));
+    _lastLogoW = lw;
+  }
   const d = objDiameter(W, H);
   active.forEach(s => {
     if (Math.abs(d - s.bsz) < 0.5) return;
@@ -1826,10 +1827,8 @@ window.addEventListener('resize', () => {
 });
 document.addEventListener('contextmenu', e => e.preventDefault());
 
-// Logo sizing is JS-authoritative: seed the intro scale/duration and the initial size now (before
-// first paint), so the title logo, its magnification and its shrink-to-centre all derive from one
-// source each (TUNING.logo* for size, LOGO_INTRO_MS for the shrink duration the CSS transition uses).
-document.documentElement.style.setProperty('--intro-scale', TUNING.logoIntroScale);
+// Logo sizing is JS-authoritative: seed the intro duration + initial sizes now (before first paint).
+// updateSizes() sets the logo width and the (viewport-clamped) --intro-scale from TUNING.
 document.documentElement.style.setProperty('--intro-dur', (LOGO_INTRO_MS / 1000) + 's');
 document.documentElement.style.setProperty('--spin-dur', DISC_SPIN_S + 's');   // disc self-rotation, one source for all discs + the detail view
 updateSizes(appEl.clientWidth, appEl.clientHeight);
