@@ -1,0 +1,18 @@
+{
+  "id": "./",
+  "name": "INTO INFINITY — AudioVisual Mixer",
+  "short_name": "INTO INFINITY",
+  "description": "8-second loop sounds and rotating discs from artists around the world, layered and mixed in real time.",
+  "lang": "en",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#f5f5f0",
+  "theme_color": "#f5f5f0",
+  "categories": ["music", "entertainment"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

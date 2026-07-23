@@ -1,10 +1,16 @@
-const CACHE_NAME = 'intoinfinity-v3';
+const CACHE_NAME = 'intoinfinity-v4';
 
-// Assets to pre-cache on install
+// Assets to pre-cache on install (core shell + PWA icons/manifest, so install works offline)
 const PRECACHE = [
   './',
   './index.html',
+  './manifest.webmanifest',
   './INTO_INFINITY_LOGO.svg',
+  './favicon.svg',
+  './icon-192.png',
+  './icon-512.png',
+  './icon-maskable-512.png',
+  './apple-touch-icon.png',
   './paring.json'
 ];
 
