@@ -67,8 +67,6 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 .export-btn.recording{border-color:rgba(220,60,60,.5);color:#c44;animation:rec-pulse 1s ease-in-out infinite}
 @keyframes rec-pulse{0%,100%{opacity:.7}50%{opacity:1}}
 
-/* Sound count */
-#sound-count{display:none}
 #ticker{position:absolute;top:15px;left:50%;transform:translateX(-50%);z-index:20;max-width:calc(100% - 110px);text-align:center;font-family:'Courier New',Courier,monospace;font-size:clamp(11px,1.6vmin,18px);letter-spacing:.03em;color:#1a1a1a;opacity:0;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* Modal */
@@ -92,8 +90,6 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 .grid-item::before{content:"";display:block;padding-bottom:100%}   /* square spacer → height = column width */
 .grid-item:hover{transform:scale(1.06)}
 .grid-item:active{transform:scale(.95)}
-.grid-item.used{border-color:rgba(80,140,255,.5)}
-.grid-item.disabled{opacity:.35;pointer-events:none}
 .grid-item img{position:absolute;inset:0;width:100%;height:100%;border-radius:50%;object-fit:cover}
 
 /* Sound circles */
@@ -145,7 +141,6 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
   <div class="corner-btn" id="btn-grid">
     <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x=".5" y=".5" width="5" height="5" rx=".8"/><rect x="8.5" y=".5" width="5" height="5" rx=".8"/><rect x=".5" y="8.5" width="5" height="5" rx=".8"/><rect x="8.5" y="8.5" width="5" height="5" rx=".8"/></svg>
   </div>
-  <div id="sound-count"></div>
   <div id="ticker"></div>
 
   <!-- Info Modal -->
@@ -752,7 +747,6 @@ function rmSound(uid) {
   if (s.glTex && TGL && !TGL.lost) TGL.gl.deleteTexture(s.glTex);
   s.glTex = null;
   active.delete(uid);
-  updCount();
 }
 
 /* ======== SPAWN ======== */
@@ -887,7 +881,6 @@ async function spawn(pairIdOverride, manual) {
     vibeAmount: 0  // current vibration amplitude 0-1
   };
   active.set(uid, obj);
-  updCount();
 
   // Fetch + decode the ear clip during the grey phase (preparation only — playback begins on
   // reveal). If the buffer arrives AFTER the reveal already fired (slow-decode fallback), start
@@ -1518,10 +1511,6 @@ function animate(time) {
   drawTrailFrame(W, H, dt);
 }
 
-function updCount() {
-  document.getElementById('sound-count').textContent =
-    active.size > 0 ? active.size + ' / ' + MAX : '';
-}
 
 /* ======== STREAMING ======== */
 function schedNext() {
@@ -1890,7 +1879,6 @@ function buildGrid() {
 
     const it = document.createElement('div');
     it.className = 'grid-item';
-    if (activePairs.has(i)) it.classList.add('used');   // marks pairs already in the mix (info only)
 
     const img = document.createElement('img');
     img.src = ASSET_DIR + pair.eye;
