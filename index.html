@@ -82,13 +82,18 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 
 /* Grid — wider modal, bigger items with good spacing */
 #grid-modal .modal-box{max-width:640px;width:94%;padding:20px 16px;max-height:85vh}
-.grid-container{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin:10px 0;max-height:62vh;overflow-y:auto;overflow-x:hidden;padding:8px 4px}
-.grid-item{aspect-ratio:1;border-radius:50%;cursor:pointer;position:relative;overflow:hidden;border:2px solid transparent;transition:border-color .2s,transform .15s}
+/* minmax(0,1fr) + min-width:0 let the columns shrink below the images' intrinsic width (a plain 1fr
+   grid item keeps its min-content = image width, so 5 columns overflow a narrow phone). The square
+   cell is made with a padding-bottom:100% spacer, NOT aspect-ratio: on iOS Safari, aspect-ratio in a
+   grid + overflow container collapses to zero height, stacking the rows on top of each other. */
+.grid-container{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;margin:10px 0;max-height:62vh;overflow-y:auto;overflow-x:hidden;padding:8px 4px}
+.grid-item{min-width:0;border-radius:50%;cursor:pointer;position:relative;overflow:hidden;border:2px solid transparent;transition:border-color .2s,transform .15s}
+.grid-item::before{content:"";display:block;padding-bottom:100%}   /* square spacer → height = column width */
 .grid-item:hover{transform:scale(1.06)}
 .grid-item:active{transform:scale(.95)}
 .grid-item.used{border-color:rgba(80,140,255,.5)}
 .grid-item.disabled{opacity:.35;pointer-events:none}
-.grid-item img{width:100%;height:100%;border-radius:50%;object-fit:cover}
+.grid-item img{position:absolute;inset:0;width:100%;height:100%;border-radius:50%;object-fit:cover}
 
 /* Sound circles */
 .sound-circle{position:absolute;border-radius:50%;cursor:grab;will-change:transform,opacity;z-index:3;background:#c2c2c2}
@@ -247,7 +252,8 @@ const TUNING = {
   centerAreaRatio:  0.45,   // center attraction reach beyond its ring (ratio of S)
   objAreaRatio:     0.40,   // object attraction reach beyond its ring (ratio of S)
   gravityPull:      1.0,    // centre attraction multiplier
-  objGravityPull:   1.9,    // object→object attraction multiplier (newborns capture satellites)
+  objGravityPull:   1.9,    // object→object attraction at birth (strong — a newborn captures others
+                            //   into a brief "mix" moment; the clump then loosens as youth fades, see lifeSoft)
   vitalityCurve:    2.0,    // exponent on youth: >1 makes just-born objects dominate the pull
   accInit:          0.10,   // initial drift-acceleration magnitude (ratio of S → px/s)
   releaseRamp:      1.0,    // seconds for releaseVelocity 0→1 after a throw/drop (suppresses then restores attraction)
@@ -258,11 +264,14 @@ const TUNING = {
    * Objects softly push apart before touching, and near the center overlap is
    * fully prevented. Enforcement scales with closeness to center (continuous). */
   separationGap:       1.12,   // desired min center gap = (r1+r2) * gap (~12% space)
-  separationStrength:  0.35,   // soft repulsion gain (lower = gentler, smoother dodging)
-  separationTangent:   0.7,    // sideways slide component — objects curve AROUND each other (rounder avoidance)
+  // Soft/hard separation are deliberately SLOW: objects are passive things drifting in a shared
+  // space, unaware of each other — a fast push reads as conscious dodging. These are per-REF_FPS
+  // convergence fractions (frame-rate independent), so lower = a gentler, slower "settle apart".
+  separationStrength:  0.15,   // soft repulsion gain (lower = gentler, slower drift apart)
+  separationTangent:   0.30,   // sideways slide — small, so they ease apart rather than visibly curve around
   separationZoneRatio: 0.40,   // center-distance (ratio of S) where enforcement is full; fades to 0 beyond
   separationHardCorrect: true, // hard-correct residual overlap inside the zone…
-  separationHardRate:  0.35,   // …but only this fraction per frame, so it eases apart instead of snapping
+  separationHardRate:  0.15,   // …but only this fraction per REF frame, so it oozes apart instead of snapping
 
   /* --- audio spatialisation / reactivity --- */
   panRange:      1.0,       // stereo pan strength
@@ -289,7 +298,9 @@ const TUNING = {
   ringGreyAmp:     0.2,
 
   /* --- lifespan --- */
-  lifeSoft: 72              // youth window (s): a neighbour's attraction weakens as it ages past this
+  lifeSoft: 56              // youth window (s): a neighbour's attraction fades out over this. Below the
+                            //   ~64s lifespan so the strong newborn pull relaxes late in life and the
+                            //   clump loosens before the object drifts out (was 72 ≈ full lifespan)
 };
 
 /* clamp helper */
@@ -953,8 +964,12 @@ function stepOrbit(s, dt, W, H, cx, cy, S, now) {
   px += s.accX * accReduction * dt;
   py += s.accY * accReduction * dt;
 
-  // 4) soft separation — strongly avoid overlap, gated by closeness to center
-  //    (dragged / still-loading objects are ignored so they don't push others around)
+  // 4) soft separation — gently ease overlap apart, gated by closeness to center
+  //    (dragged / still-loading objects are ignored so they don't push others around).
+  //    Frame-rate independent: strength is the per-REF_FPS fraction, so the drift-apart is the same
+  //    slow "settle" on a 120Hz phone as at the 25fps reference (an un-normalised push looked like
+  //    the objects were quickly, deliberately dodging each other).
+  const sepRate = 1 - Math.pow(1 - TUNING.separationStrength, dt * REF_FPS);
   active.forEach(o => {
     if (o === s || o.phase === 'thrown' || o.phase === 'dragging' || !o.revealStart) return;
     const dx = px - (o.x + o.bsz / 2), dy = py - (o.y + o.bsz / 2);
@@ -964,7 +979,7 @@ function stepOrbit(s, dt, W, H, cx, cy, S, now) {
       const centerDist = Math.hypot(px - cx, py - cy);
       const gate = 1 - clamp(0, centerDist / (TUNING.separationZoneRatio * S), 1);
       if (gate > 0) {
-        const push = (minD - d) * TUNING.separationStrength * gate;
+        const push = (minD - d) * sepRate * gate;
         const ux = dx / d, uy = dy / d;                 // radial (away from o)
         const tan = TUNING.separationTangent;
         // radial push + tangential slide → the two circles curve around each other
@@ -985,8 +1000,9 @@ function stepOrbit(s, dt, W, H, cx, cy, S, now) {
 }
 
 // Hard non-overlap correction near the center (backstop after positions settle).
-function separateHard(cx, cy, S) {
+function separateHard(cx, cy, S, dt) {
   if (!TUNING.separationHardCorrect) return;
+  const hardRate = 1 - Math.pow(1 - TUNING.separationHardRate, dt * REF_FPS);   // frame-rate independent
   _ballScratch.length = 0;
   active.forEach(v => { if (v.phase === 'orbit' && v.revealStart) _ballScratch.push(v); });   // dragged / loading excluded
   const arr = _ballScratch, n = arr.length;
@@ -1003,7 +1019,7 @@ function separateHard(cx, cy, S) {
         const gate = 1 - clamp(0, Math.hypot(mx - cx, my - cy) / (TUNING.separationZoneRatio * S), 1);
         if (gate > 0) {
           // ease apart over a few frames (rate) with a tangential slide, so it curves rather than snaps
-          const corr = ((minD - d) / 2) * gate * TUNING.separationHardRate;
+          const corr = ((minD - d) / 2) * gate * hardRate;
           const ux = dx / d, uy = dy / d, tan = TUNING.separationTangent;
           const vx = ux - uy * tan, vy = uy + ux * tan;
           if (a.phase !== 'dragging') { a.x += vx * corr; a.y += vy * corr; }
@@ -1471,7 +1487,7 @@ function animate(time) {
   });
 
   // Hard non-overlap backstop near the center (after all positions settle)
-  if (!frozen) separateHard(cx, cy, S);
+  if (!frozen) separateHard(cx, cy, S, dt);
 
   if (toRemove.length) {
     toRemove.forEach(uid => rmSound(uid));
@@ -1794,10 +1810,25 @@ async function exportMix() {
 }
 
 /* ======== START ======== */
+/* ======== SCREEN WAKE LOCK ========
+ * Keep the display awake (kiosk / installation use). Screen Wake Lock API — iOS 16.4+, and ONLY in
+ * a secure context (HTTPS or localhost); over plain http on a LAN IP navigator.wakeLock is absent,
+ * so this no-ops. The lock auto-releases when the page is hidden, so it's re-acquired on return
+ * (see the visibilitychange handler). Fails silently under low-power mode / denial. */
+let wakeLock = null;
+async function requestWakeLock() {
+  if (!('wakeLock' in navigator) || wakeLock) return;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+  } catch (e) { wakeLock = null; }
+}
+
 async function startApp() {
   if (started) return;
   started = true;
   unlockAudio();   // create + resume + start a silent buffer INSIDE the start gesture (iOS unlock)
+  requestWakeLock();   // keep the screen awake (secure context only; no-op otherwise)
   resizeTrail();
   // Intro: shrink the title logo into the centre. Enable the shrink transition only now, and commit
   // the current (title) size first, so the reduction animates from here — not on the title screen.
@@ -1889,7 +1920,9 @@ document.addEventListener('contextmenu', e => e.preventDefault());
 // Returning from background/sleep: iOS suspends the AudioContext — resume it so sound continues.
 // (The physics catch-up for the same pause is handled in animate() via the large-gap guard.)
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (document.hidden) return;
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (started) requestWakeLock();   // the wake lock auto-releases while hidden — re-acquire on return
 });
 
 // Logo sizing is JS-authoritative: seed the intro duration + initial sizes now (before first paint).
