@@ -27,8 +27,10 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 #infinity-wrap:active{transform:translate(-50%,-50%) scale(.92)}
 /* Intro: sit above the start overlay as the title, and let taps pass through to it */
 #infinity-wrap.intro{z-index:101;pointer-events:none}
-/* Scaler shrinks from title size to centre size on start */
-#infinity-scaler{transition:transform var(--intro-dur,1.15s) ease-in-out}
+/* Scaler shrinks from title size to centre size on start. The transition is enabled ONLY during
+   that shrink (.intro-anim, added on start) — otherwise a title-screen resize (e.g. the iOS address
+   bar settling → --intro-scale recompute) would animate the resting title size for no reason. */
+#infinity-scaler.intro-anim{transition:transform var(--intro-dur,1.15s) ease-in-out}
 #infinity-scaler.intro{transform:scale(var(--intro-scale,3.2))}
 /* width here is a no-JS fallback only — JS (TUNING.logo*, via logoWidth) sets the real capped width before first paint */
 #infinity-logo{width:min(22vw,22vh);height:auto;pointer-events:none;transition:filter .4s;will-change:transform}
@@ -65,7 +67,7 @@ html,body{width:100%;height:100%;overflow:hidden;touch-action:none;-webkit-touch
 #freeze-label.show{opacity:1}
 
 /* Sound count */
-#sound-count{position:absolute;top:16px;right:16px;z-index:20;font-size:.52rem;letter-spacing:.06em;color:rgba(0,0,0,.2);font-weight:300}
+#sound-count{display:none}
 #ticker{position:absolute;top:15px;left:50%;transform:translateX(-50%);z-index:20;max-width:calc(100% - 110px);text-align:center;font-family:'Courier New',Courier,monospace;font-size:clamp(11px,1.6vmin,18px);letter-spacing:.03em;color:#1a1a1a;opacity:0;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* Modal */
@@ -223,7 +225,7 @@ const TUNING = {
   /* --- spawn orbit placement (ratios of S) --- */
 
   /* --- audio→visual response (unitless) --- */
-  volumeGain:  0.25,        // audioEl.volume = vol*vol*volumeGain
+  volumeGain:  0.25,        // gain.gain.value = vol*vol*volumeGain
   // Size: radius = sizeRest*(1 + vu), where vu = audio loudness × volume.
   sizeRest:      0.70,      // rest size when there's no audio energy
   sizeAudioGain: 1.0,       // how strongly vu (audio×volume) expands the size outward
@@ -350,6 +352,28 @@ function getAudioCtx() {
   }
   if (audioCtx.state === 'suspended') audioCtx.resume();
   return audioCtx;
+}
+
+// iOS unlock: on iOS Safari, Web Audio buffer playback stays silent until an AudioBufferSourceNode
+// has been start()ed INSIDE a user gesture — resume() alone is not enough (this is why every sound
+// was silent after the move from <audio> to buffer sources). Play one silent 1-sample buffer on the
+// first tap so all later (off-gesture) sounds are audible.
+let audioUnlocked = false;
+function unlockAudio() {
+  // iOS 16.4+: route Web Audio through the media channel so the hardware mute (silent) switch does
+  // NOT silence it — like a normal media app. Without this, pure Web Audio is muted by the switch
+  // (the old <audio> path played through media, which is why it ignored the switch).
+  if (navigator.audioSession) { try { navigator.audioSession.type = 'playback'; } catch(e) {} }
+  const ctx = getAudioCtx();
+  if (ctx.state === 'suspended') ctx.resume();
+  if (audioUnlocked) return;
+  try {
+    const src = ctx.createBufferSource();
+    src.buffer = ctx.createBuffer(1, 1, 22050);
+    src.connect(ctx.destination);
+    src.start(0);
+    audioUnlocked = true;
+  } catch(e) {}
 }
 
 /* ======== STATE ======== */
@@ -629,52 +653,62 @@ function resizeTrail() {
 
 initTrailRenderer();
 
-/* ======== AUDIO (with Web Audio API analyser) ======== */
-function createAudioEl(earFile) {
-  const a = new Audio();
-  a.src = ASSET_DIR + earFile;
-  a.loop = true;
-  a.volume = 0;
-  a.preload = 'auto';        // buffers during the grey "preparing" phase; playback starts on reveal
-  a.crossOrigin = 'anonymous';
-  return a;
+/* ======== AUDIO (Web Audio API, buffer-source playback) ========
+ * Each ear clip is fetched once and decoded into an AudioBuffer, then played through an
+ * AudioBufferSourceNode (pure Web Audio — no <audio> element). This is the reliable path for
+ * SIMULTANEOUS playback on iOS Safari, which starves/blocks multiple concurrent MediaElement
+ * sources (the old <audio> + createMediaElementSource route — first sound played, the rest went
+ * silent). Per-sound graph: bufferSource → analyser (full-signal tap for reactivity)
+ *                                       → gain (audible volume) → [stereo panner] → destination
+ */
+function loadAudioBuffer(earFile) {
+  const ctx = getAudioCtx();
+  return fetch(ASSET_DIR + earFile)
+    .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+    .then(ab => ctx.decodeAudioData(ab));
 }
 
-// Returns { analyser, gain, panner }. The analyser taps the FULL-amplitude signal (so size reacts
-// to the real audio); gain sets audible volume; panner places it left/right by screen position.
-function createAnalyser(audioEl) {
+// Build the per-sound audio graph from its decoded buffer and start looping playback.
+// Called on reveal (the grey phase was preparation only). No-op if already playing or undecoded.
+function startPlayback(s) {
+  if (s.playing || !s.audioBuffer) return;
   try {
     const ctx = getAudioCtx();
-    const source = ctx.createMediaElementSource(audioEl);
-    audioEl.volume = 1;              // full signal into the graph — analyser sees the real audio
-    const analyser = ctx.createAnalyser();
+    const src = ctx.createBufferSource();
+    src.buffer = s.audioBuffer;
+    src.loop = true;
+    const analyser = ctx.createAnalyser();   // full-amplitude tap so size reacts to the real audio
     analyser.fftSize = 512;
     analyser.smoothingTimeConstant = 0.75;
     analyser.minDecibels = -70;
     analyser.maxDecibels = -30;
     const gain = ctx.createGain();
-    gain.gain.value = 0;             // audible volume, set per frame from distance
-    source.connect(analyser);        // full-amplitude tap for reactivity
-    source.connect(gain);
-    // Stereo panning by horizontal position
+    gain.gain.value = 0;                      // audible volume, set per frame from distance
+    src.connect(analyser);                    // full-amplitude tap for reactivity
+    src.connect(gain);
     let panner = null;
     if (ctx.createStereoPanner) {
       panner = ctx.createStereoPanner();
       gain.connect(panner);
       panner.connect(ctx.destination);
     } else {
-      gain.connect(ctx.destination); // fallback: no panning on very old browsers
+      gain.connect(ctx.destination);          // fallback: no panning on very old browsers
     }
-    return { analyser, gain, panner };
+    s.srcNode = src;
+    s.analyser = analyser;
+    s.analyserData = new Uint8Array(analyser.frequencyBinCount);
+    s.gain = gain;
+    s.panner = panner;
+    src.start(0);
+    s.playing = true;
   } catch(e) {
-    console.warn('Could not create analyser:', e);
-    return null;
+    console.warn('Could not start playback:', e);
   }
 }
 
-// Audible-volume helpers (gain node when the graph exists, else the element's own volume)
-function setAudibleVol(s, v) { if (s.gain) s.gain.gain.value = v; else { try { s.audioEl.volume = v; } catch(e) {} } }
-function getAudibleVol(s) { return s.gain ? s.gain.gain.value : s.audioEl.volume; }
+// Audible-volume helpers (the gain node exists once playback has started; silent before that)
+function setAudibleVol(s, v) { if (s.gain) s.gain.gain.value = v; }
+function getAudibleVol(s) { return s.gain ? s.gain.gain.value : 0; }
 
 /* ======== HELPERS ======== */
 function d2c(x, y, W, H) { return Math.hypot(x - W/2, y - H/2); }
@@ -686,11 +720,16 @@ function rmSound(uid) {
   if (!s) return;
   activePairs.delete(s.pairId);
   try {
-    s.audioEl.volume = 0;
+    if (s.gain) s.gain.gain.value = 0;   // silence immediately
+    const src = s.srcNode, gain = s.gain, panner = s.panner, analyser = s.analyser;
     setTimeout(() => {
-      try { s.audioEl.pause(); s.audioEl.removeAttribute('src'); s.audioEl.load(); } catch(e) {}
+      try { if (src) { src.stop(); src.disconnect(); } } catch(e) {}
+      try { if (analyser) analyser.disconnect(); } catch(e) {}
+      try { if (gain) gain.disconnect(); } catch(e) {}
+      try { if (panner) panner.disconnect(); } catch(e) {}
     }, 200);
   } catch(e) {}
+  s.srcNode = null; s.gain = null; s.panner = null; s.analyser = null;
   if (s.el.parentNode) s.el.parentNode.removeChild(s.el);
   if (s.glTex && TGL && !TGL.lost) TGL.gl.deleteTexture(s.glTex);
   s.glTex = null;
@@ -790,18 +829,8 @@ async function spawn(pairIdOverride) {
   appEl.appendChild(el);
   el.dataset.uid = uid;
 
-  // Create audio element — during the grey phase it only PREPARES (buffers); it is not played.
-  const audioEl = createAudioEl(pair.ear);
-
-  // Create Web Audio analyser (full-signal tap) + gain node (audible volume)
-  const audioNodes = createAnalyser(audioEl);
-  const analyser = audioNodes ? audioNodes.analyser : null;
-  const gain = audioNodes ? audioNodes.gain : null;
-  const panner = audioNodes ? audioNodes.panner : null;
-  const analyserData = analyser ? new Uint8Array(analyser.frequencyBinCount) : null;
-
   const obj = {
-    el, audioEl, pairId, pair,
+    el, pairId, pair,
     born: Date.now(), bsz, uid,
     x: initX - bsz/2, y: initY - bsz/2,
     _tpx: initX, _tpy: initY, _tpr: 0,  // previous trail-stamp centre + radius (sub-frame supersampling)
@@ -813,18 +842,28 @@ async function spawn(pairIdOverride) {
     releaseVelocity: 1,
     ringOffset,                                // per-object target-radius offset (so rings don't stack)
     loadAngle: angle, loadRadius: orbitR,      // grey-phase orbit radius = target ring (no reveal jump)
-    smVol: 0, gain, panner,                    // smoothed volume + gain (audible level) + stereo panner
+    smVol: 0,                                  // smoothed volume
+    // Web Audio: decoded clip + per-sound graph nodes (the graph is built on reveal in startPlayback)
+    audioBuffer: null, audioReady: false, playing: false,
+    srcNode: null, gain: null, panner: null, analyser: null, analyserData: null,
     rippleStart: -1,                           // active ripple's start time (-1 = none)
     ringA: 0,                                  // smoothed orbit-ring opacity
     throwVx: 0, throwVy: 0,
     // Loading → reveal state (grey circle until the image is ready + LOAD_MIN_MS)
     revealStart: 0, imgReady: false,
-    // Audio analyser for vibration
-    analyser, analyserData,
     vibeAmount: 0  // current vibration amplitude 0-1
   };
   active.set(uid, obj);
   updCount();
+
+  // Fetch + decode the ear clip during the grey phase (preparation only — playback begins on
+  // reveal). If the buffer arrives AFTER the reveal already fired (slow-decode fallback), start
+  // playback the moment it's ready.
+  loadAudioBuffer(pair.ear).then(buf => {
+    obj.audioBuffer = buf;
+    obj.audioReady = true;
+    if (obj.revealStart && !obj.playing) startPlayback(obj);
+  }).catch(e => { console.warn('Could not load audio', pair.ear, e); });
 
   // Mark the image ready now (cached) or when it finishes loading
   if (img.complete && img.naturalWidth) obj.imgReady = true;
@@ -1312,8 +1351,19 @@ function animate(time) {
   if (!started) return;
   if (detailTarget) return;
   if (!lastT) lastT = time;
-  const dt = Math.min((time - lastT) / 1000, 0.1);
+  const rawDt = (time - lastT) / 1000;
   lastT = time;
+  // Returning from a background/sleep pause: rAF was frozen so a huge gap elapsed. Aging is driven
+  // by Date.now() (not dt), so without this every object would suddenly be far past DRIFT_AT and
+  // spiral out at high speed. Pause aging over the gap (shift births forward, like freeze) and skip
+  // this frame's physics so nothing lurches.
+  if (rawDt > 0.5) {
+    // When frozen, aging is already paused (togFreeze lump-shifts births on unfreeze), so leave
+    // births alone; otherwise shift them forward by the gap so no time passes while backgrounded.
+    if (!frozen) { const gapMs = rawDt * 1000; active.forEach(o => { o.born += gapMs; }); }
+    return;
+  }
+  const dt = Math.min(rawDt, 0.1);
 
   const W = appEl.clientWidth, H = appEl.clientHeight;
   const cx = W / 2, cy = H / 2;
@@ -1338,12 +1388,12 @@ function animate(time) {
     // Loading (grey circle) → reveal (expand + image fade). Held for LOAD_MIN_MS even
     // when cached, then until the image is ready; revealE drives the expand.
     // "Prepared" = image + audio buffered (cap avoids stalling forever on a slow buffer)
-    const prepared = s.imgReady && (s.audioEl.readyState >= 3 || age >= LOAD_MIN_MS + 5000);
+    const prepared = s.imgReady && (s.audioReady || age >= LOAD_MIN_MS + 5000);
     if (!s.revealStart && age >= LOAD_MIN_MS && prepared) {
       s.revealStart = now;
       s.el.classList.add('revealed');   // CSS fades the image in over the grey circle
       s.destX = s.x + s.bsz/2; s.destY = s.y + s.bsz/2;   // hand off to the attraction model from here
-      s.audioEl.play().catch(() => {}); // playback begins on reveal (grey phase was preparation only)
+      startPlayback(s);                 // looping playback begins on reveal (grey phase was preparation only)
       showTicker('Playing ' + s.pair.eyeArtist + ' x ' + s.pair.earArtist);
     }
     const revealE = s.revealStart ? easeOut3(Math.min(1, (now - s.revealStart) / REVEAL_DUR)) : 0;
@@ -1468,12 +1518,16 @@ function anyModalOpen() {
 
 function onDown(e) {
   if (!started || detailTarget || anyModalOpen()) return;
+  unlockAudio();   // resume + (re)unlock after any iOS interruption / audio-session steal
   const pos = pPos(e);
 
   if (!anyModalOpen()) {
     const ir = document.getElementById('infinity-wrap').getBoundingClientRect();
     if (pos.x >= ir.left - 15 && pos.x <= ir.right + 15 &&
         pos.y >= ir.top - 15  && pos.y <= ir.bottom + 15) {
+      // preventDefault stops iOS from firing a synthetic mousedown ~300ms later, which would
+      // call onDown → togFreeze a SECOND time and immediately undo the toggle.
+      e.preventDefault();
       togFreeze();
       return;
     }
@@ -1743,9 +1797,14 @@ async function exportMix() {
 async function startApp() {
   if (started) return;
   started = true;
+  unlockAudio();   // create + resume + start a silent buffer INSIDE the start gesture (iOS unlock)
   resizeTrail();
-  // Intro: shrink the title logo into the centre
-  document.getElementById('infinity-scaler').classList.remove('intro');
+  // Intro: shrink the title logo into the centre. Enable the shrink transition only now, and commit
+  // the current (title) size first, so the reduction animates from here — not on the title screen.
+  const scaler = document.getElementById('infinity-scaler');
+  scaler.classList.add('intro-anim');
+  void scaler.offsetWidth;                 // flush the title-size layout before removing .intro
+  scaler.classList.remove('intro');
   document.getElementById('start-overlay').classList.add('hidden');
   await loadPairs();
   // Once the logo has settled: start it spinning, then spawn the first object
@@ -1826,6 +1885,12 @@ window.addEventListener('resize', () => {
   if (!started) updateSizes(appEl.clientWidth, appEl.clientHeight);  // pre-start: keep the title logo sized (running frames do this in animate)
 });
 document.addEventListener('contextmenu', e => e.preventDefault());
+
+// Returning from background/sleep: iOS suspends the AudioContext — resume it so sound continues.
+// (The physics catch-up for the same pause is handled in animate() via the large-gap guard.)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+});
 
 // Logo sizing is JS-authoritative: seed the intro duration + initial sizes now (before first paint).
 // updateSizes() sets the logo width and the (viewport-clamped) --intro-scale from TUNING.
