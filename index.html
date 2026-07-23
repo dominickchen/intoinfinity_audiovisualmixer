@@ -1541,18 +1541,9 @@ function onDown(e) {
   unlockAudio();   // resume + (re)unlock after any iOS interruption / audio-session steal
   const pos = pPos(e);
 
-  if (!anyModalOpen()) {
-    const ir = document.getElementById('infinity-wrap').getBoundingClientRect();
-    if (pos.x >= ir.left - 15 && pos.x <= ir.right + 15 &&
-        pos.y >= ir.top - 15  && pos.y <= ir.bottom + 15) {
-      // preventDefault stops iOS from firing a synthetic mousedown ~300ms later, which would
-      // call onDown → togFreeze a SECOND time and immediately undo the toggle.
-      e.preventDefault();
-      togFreeze();
-      return;
-    }
-  }
-
+  // An object under the pointer ALWAYS wins → drag it (even when it sits over the centre ∞, and
+  // even while frozen — you're grabbing a disc, so you mean to move it). Only an empty centre
+  // falls through to the freeze toggle below.
   const s = findAt(pos.x, pos.y);
   if (s && (s.phase === 'orbit' || s.phase === 'thrown')) {
     dragTgt = s;
@@ -1564,6 +1555,17 @@ function onDown(e) {
     dHist = [{ x: pos.x, y: pos.y, t: Date.now() }];
     s.el.style.zIndex = '15';
     e.preventDefault();
+    return;
+  }
+
+  // No disc here → the centre ∞ toggles freeze
+  const ir = document.getElementById('infinity-wrap').getBoundingClientRect();
+  if (pos.x >= ir.left - 15 && pos.x <= ir.right + 15 &&
+      pos.y >= ir.top - 15  && pos.y <= ir.bottom + 15) {
+    // preventDefault stops iOS from firing a synthetic mousedown ~300ms later, which would
+    // call onDown → togFreeze a SECOND time and immediately undo the toggle.
+    e.preventDefault();
+    togFreeze();
   }
 }
 
