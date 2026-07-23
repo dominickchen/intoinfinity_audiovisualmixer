@@ -395,7 +395,14 @@ const _ballScratch = [];    // reused each frame to avoid per-frame array alloca
 let nxtTimer = null;
 let uid_ = 0;
 let dragTgt = null, dOX = 0, dOY = 0, dHist = [];
-const activePairs = new Set();
+// pairId → number of active instances. A Map (not a Set) so a pair can be added more than once
+// from the grid (duplicates allowed); .has(id) still means "at least one instance is live".
+const activePairs = new Map();
+function addPairInstance(id) { activePairs.set(id, (activePairs.get(id) || 0) + 1); }
+function delPairInstance(id) {
+  const n = (activePairs.get(id) || 0) - 1;
+  if (n > 0) activePairs.set(id, n); else activePairs.delete(id);
+}
 let lastT = 0;
 let detailTarget = null;
 let clickStart = null;
@@ -729,7 +736,7 @@ function easeOut3(t) { return 1 - Math.pow(1 - t, 3); }
 function rmSound(uid) {
   const s = active.get(uid);
   if (!s) return;
-  activePairs.delete(s.pairId);
+  delPairInstance(s.pairId);
   try {
     if (s.gain) s.gain.gain.value = 0;   // silence immediately
     const src = s.srcNode, gain = s.gain, panner = s.panner, analyser = s.analyser;
@@ -787,8 +794,10 @@ function showTicker(text) {
   }, TICKER_HOLD_MS);
 }
 
-async function spawn(pairIdOverride) {
-  if (active.size >= MAX || PAIRS.length === 0) return;
+// manual = true for grid adds: duplicates are allowed and a full mix evicts its oldest disc to make
+// room. Auto-spawn (manual falsy) keeps the MAX cap and skips pairs already on screen.
+async function spawn(pairIdOverride, manual) {
+  if (PAIRS.length === 0) return;
 
   let pairId;
   if (pairIdOverride !== undefined) {
@@ -798,11 +807,20 @@ async function spawn(pairIdOverride) {
     if (pairId === null) return;
   }
 
-  if (activePairs.has(pairId)) return;
-  activePairs.add(pairId);
+  if (manual) {
+    if (active.size >= MAX) {
+      const oldest = active.keys().next().value;   // Map keeps spawn order → first key = oldest
+      if (oldest !== undefined) rmSound(oldest);    // evict it immediately to make room
+    }
+  } else {
+    if (active.size >= MAX) return;
+    if (activePairs.has(pairId)) return;            // auto-spawn won't duplicate a live pair
+  }
+
+  addPairInstance(pairId);
 
   const pair = PAIRS[pairId];
-  if (!pair) { activePairs.delete(pairId); return; }
+  if (!pair) { delPairInstance(pairId); return; }
 
   showTicker('Incoming ' + pair.eyeArtist + ' x ' + pair.earArtist);
 
@@ -1872,8 +1890,7 @@ function buildGrid() {
 
     const it = document.createElement('div');
     it.className = 'grid-item';
-    if (activePairs.has(i)) it.classList.add('used');
-    if (active.size >= MAX && !activePairs.has(i)) it.classList.add('disabled');
+    if (activePairs.has(i)) it.classList.add('used');   // marks pairs already in the mix (info only)
 
     const img = document.createElement('img');
     img.src = ASSET_DIR + pair.eye;
@@ -1883,10 +1900,9 @@ function buildGrid() {
 
     const pairId = i;
     it.addEventListener('click', () => {
-      if (active.size < MAX && started && !activePairs.has(pairId)) {
-        spawn(pairId);
-        closeModal('grid-modal');
-      }
+      if (!started) return;
+      spawn(pairId, true);   // manual add: duplicates allowed; a full mix evicts its oldest disc
+      closeModal('grid-modal');
     });
     c.appendChild(it);
   }
