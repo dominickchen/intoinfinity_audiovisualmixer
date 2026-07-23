@@ -843,6 +843,10 @@ async function spawn(pairIdOverride) {
   const obj = {
     el, pairId, pair,
     born: Date.now(), bsz, uid,
+    // Disc self-spin clock: real time from spawn, NEVER shifted (unlike `born`, which freeze/throw
+    // rewind for lifespan). The DOM disc spins on real time via CSS, so the trail must too, or after
+    // an unfreeze the trail rotation would lag `born`'s rewind and leave a rotated ghost burned in.
+    spinBorn: Date.now(),
     x: initX - bsz/2, y: initY - bsz/2,
     _tpx: initX, _tpy: initY, _tpr: 0,  // previous trail-stamp centre + radius (sub-frame supersampling)
     phase: 'orbit',           // orbit | dragging | thrown
@@ -1138,7 +1142,7 @@ function drawTrailFrameGL(W, H, dt) {
       }
       if (!s.glTex) { s._tpx = dcx; s._tpy = dcy; s._tpr = r; return; }   // not ready — advance, skip
       tex = s.glTex;
-      rot = -(((now - s.born) / 1000 / DISC_SPIN_S) % 1) * Math.PI * 2;   // CCW, matching the logo
+      rot = -(((now - s.spinBorn) / 1000 / DISC_SPIN_S) % 1) * Math.PI * 2;   // CCW; real-time clock (matches the CSS spin)
       tint = 0; tintMix = 0;
     }
 
@@ -1251,7 +1255,7 @@ function drawTrailFrame2D(W, H, dt) {
     if (s.revealStart) {
       img = s.el.querySelector('img');
       if (!img || !img.complete || !img.naturalWidth) { s._tpx = dcx; s._tpy = dcy; s._tpr = r; return; }
-      rot = -(((now - s.born) / 1000 / DISC_SPIN_S) % 1) * Math.PI * 2;   // CCW, matching the logo
+      rot = -(((now - s.spinBorn) / 1000 / DISC_SPIN_S) % 1) * Math.PI * 2;   // CCW; real-time clock (matches the CSS spin)
     }
 
     const prevR = s._tpr || r;
